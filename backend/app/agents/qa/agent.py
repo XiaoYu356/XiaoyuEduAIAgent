@@ -205,7 +205,7 @@ class QAAgent(BaseAgent):
         query = state["query"]
         reranked = rerank_with_metadata(query, docs, content_key="content", top_k=3)
         
-        relevant_docs = [d for d in reranked if d.get("rerank_score", 0) >= 0.5]
+        relevant_docs = [d for d in reranked if d.get("rerank_score", 0) >= 0.6]
         
         if relevant_docs:
             state["context"]["reranked_docs"] = relevant_docs
@@ -244,7 +244,7 @@ class QAAgent(BaseAgent):
                 messages.extend(history[-10:])
             messages.append({"role": "user", "content": state["query"]})
             answer = await LLMFactory.chat(messages, temperature=0.7)
-        elif confidence < 0.5 or not docs:
+        elif confidence < 0.6 or not docs:
             confidence_note = "\n\n⚠️ 以上回答仅供参考，知识库中相关信息有限，建议进一步确认。"
             messages, summary = await self.format_messages_async(state)
             if summary:
@@ -258,7 +258,7 @@ class QAAgent(BaseAgent):
                 messages[-1]["content"] = state["query"]
             answer = await LLMFactory.chat(messages, temperature=0.3)
             answer = answer + confidence_note
-        elif confidence >= 0.7 and sources:
+        elif confidence >= 0.75 and sources:
             confidence_note = "\n\n📚 参考来源：" + "、".join(sources)
             messages, summary = await self.format_messages_async(state)
             if summary:
@@ -282,7 +282,7 @@ class QAAgent(BaseAgent):
         state["final_answer"] = answer
         state["confidence"] = confidence
 
-        if query_type != "chitchat" and (confidence < 0.5 or not docs):
+        if query_type != "chitchat" and (confidence < 0.6 or not docs):
             state["context"]["knowledge_gap"] = True
 
         return state
@@ -361,9 +361,9 @@ class QAAgent(BaseAgent):
         async for chunk in LLMFactory.chat_stream(messages, temperature=0.3):
             yield chunk
 
-        if confidence < 0.5 or not docs:
+        if confidence < 0.6 or not docs:
             yield "\n\n⚠️ 以上回答仅供参考，知识库中相关信息有限，建议进一步确认。"
-        elif confidence >= 0.7 and sources:
+        elif confidence >= 0.75 and sources:
             yield "\n\n📚 参考来源：" + "、".join(sources)
         
         yield json.dumps({"confidence": confidence, "query_type": query_type}, ensure_ascii=False)

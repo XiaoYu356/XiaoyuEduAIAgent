@@ -39,6 +39,7 @@ class BM25Index:
         return self._redis
 
     async def build_index(self, collection_name: str, documents: list[dict]):
+        logger.info(f"BM25索引构建开始: {collection_name}, 文档数: {len(documents)}")
         for doc in documents:
             doc["metadata"] = _normalize_metadata(doc.get("metadata", {}))
         tokenized_corpus = []
@@ -51,6 +52,7 @@ class BM25Index:
             documents=documents,
         )
         await self._save_to_redis(collection_name, documents)
+        logger.info(f"BM25索引构建完成: {collection_name}")
 
     async def add_documents(self, collection_name: str, new_documents: list[dict]):
         for doc in new_documents:
@@ -163,9 +165,11 @@ class BM25Index:
         if collection_name in self._indices:
             return True
         
+        logger.info(f"BM25索引不在内存中，尝试从Redis加载: {collection_name}")
         if await self._load_from_redis(collection_name):
             return True
         
+        logger.info(f"BM25索引不在Redis中，尝试从Milvus加载: {collection_name}")
         documents = load_all_documents_from_milvus(collection_name)
         if documents:
             for doc in documents:
@@ -180,8 +184,10 @@ class BM25Index:
                 documents=documents,
             )
             await self._save_to_redis(collection_name, documents)
+            logger.info(f"BM25索引从Milvus加载完成: {collection_name}")
             return True
         
+        logger.warning(f"BM25索引无法加载: {collection_name}, Milvus中无文档")
         return False
 
     def remove_index(self, collection_name: str):

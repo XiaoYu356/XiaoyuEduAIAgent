@@ -92,12 +92,14 @@ async def delete_knowledge_base(
     kb = result.scalar_one_or_none()
     if not kb:
         raise ValueError("知识库不存在")
-    delete_collection(kb.collection_name)
-    doc_result = await db.execute(
-        select(KnowledgeDocument).where(KnowledgeDocument.kb_id == kb_id)
-    )
-    for doc in doc_result.scalars().all():
-        await db.delete(doc)
+    
+    collection_name = kb.collection_name
+    
+    delete_collection(collection_name)
+    
+    bm25 = get_bm25_index()
+    bm25.remove_index(collection_name)
+    
     await db.delete(kb)
     await db.commit()
     return ResponseBase(message="知识库已删除")
@@ -380,12 +382,6 @@ async def delete_document(
         if kb.doc_count < 0:
             kb.doc_count = 0
 
-    versions_result = await db.execute(
-        select(DocumentVersion).where(DocumentVersion.doc_id == doc_id)
-    )
-    for version in versions_result.scalars().all():
-        await db.delete(version)
-
     await db.delete(doc)
     await db.commit()
 
@@ -496,7 +492,7 @@ async def resolve_knowledge_gap(
         
         await delete_documents_by_metadata(
             kb.collection_name,
-            {"doc_title": doc_title}
+            {"source": doc_title}
         )
         await bm25.remove_document(kb.collection_name, doc_title)
         

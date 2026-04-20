@@ -224,7 +224,7 @@ async def chat_stream(
         )
         db.add(assistant_msg)
 
-        if query_type != "chitchat" and confidence < 0.5:
+        if query_type != "chitchat" and confidence < 0.6:
             kb_id = data.kb_ids[0] if data.kb_ids else None
             existing_gap = None
             if kb_id:
