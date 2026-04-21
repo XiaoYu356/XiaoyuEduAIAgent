@@ -1,10 +1,10 @@
 <template>
   <div class="resume-container">
     <el-row :gutter="20">
-      <el-col :span="6">
-        <el-card class="upload-card">
+      <el-col :xs="24" :sm="8" :md="6">
+        <el-card class="upload-card" shadow="hover">
           <template #header>
-            <span>上传简历</span>
+            <span class="card-header-title">📤 上传简历</span>
           </template>
           <el-upload
             ref="uploadRef"
@@ -16,29 +16,32 @@
           >
             <el-icon class="el-icon--upload"><upload-filled /></el-icon>
             <div class="el-upload__text">拖拽或点击上传</div>
+            <template #tip>
+              <div class="upload-tip">支持 PDF、Word、图片等格式</div>
+            </template>
           </el-upload>
           <el-button
-            type="success"
+            type="primary"
             @click="startReview"
             :loading="loading"
             :disabled="!selectedFile"
             style="margin-top: 16px; width: 100%"
           >
-            开始审查
+            {{ loading ? '审查中...' : '开始审查' }}
           </el-button>
         </el-card>
 
-        <el-card class="history-card" style="margin-top: 16px">
+        <el-card class="history-card" shadow="hover" style="margin-top: 16px">
           <template #header>
             <div style="display: flex; justify-content: space-between; align-items: center;">
-              <span>历史记录</span>
+              <span class="card-header-title">📋 历史记录</span>
               <el-button type="primary" link size="small" @click="loadHistory">
                 刷新
               </el-button>
             </div>
           </template>
           <div v-if="historyLoading" style="text-align: center; padding: 20px;">
-            <el-icon class="is-loading"><loading /></el-icon>
+            <el-icon class="is-loading" :size="24"><loading /></el-icon>
           </div>
           <div v-else-if="historyList.length === 0" style="text-align: center; color: #909399; padding: 20px;">
             暂无历史记录
@@ -70,11 +73,11 @@
           </div>
         </el-card>
       </el-col>
-      <el-col :span="18">
-        <el-card v-if="report" class="report-card">
+      <el-col :xs="24" :sm="16" :md="18">
+        <el-card v-if="report" class="report-card" shadow="hover">
           <template #header>
             <div style="display: flex; justify-content: space-between; align-items: center;">
-              <span>审查报告</span>
+              <span class="card-header-title">📊 审查报告</span>
               <el-button v-if="currentResumeId" type="primary" link size="small" @click="startReviewById">
                 重新审查
               </el-button>
@@ -82,16 +85,16 @@
           </template>
           <div class="report-content" v-html="renderMarkdown(report)"></div>
         </el-card>
-        <el-card v-else class="empty-card">
+        <el-card v-else class="empty-card" shadow="hover">
           <el-empty description="请上传简历开始审查" />
         </el-card>
       </el-col>
     </el-row>
     <el-row :gutter="20" style="margin-top: 20px" v-if="radarData">
       <el-col :span="24">
-        <el-card>
+        <el-card shadow="hover">
           <template #header>
-            <span>能力雷达图</span>
+            <span class="card-header-title">🎯 能力雷达图</span>
           </template>
           <div ref="radarRef" style="height: 400px"></div>
           <div class="radar-data">
@@ -346,8 +349,16 @@ function renderRadar(data) {
   if (!radarRef.value) return
   const chart = echarts.init(radarRef.value)
   chart.setOption({
+    tooltip: {},
     radar: {
       indicator: data.indicators.map((name) => ({ name, max: 100 })),
+      shape: 'circle',
+      splitArea: {
+        areaStyle: {
+          color: ['rgba(64, 158, 255, 0.05)', 'rgba(64, 158, 255, 0.1)',
+                  'rgba(64, 158, 255, 0.15)', 'rgba(64, 158, 255, 0.2)']
+        }
+      }
     },
     series: [
       {
@@ -356,12 +367,22 @@ function renderRadar(data) {
           {
             value: data.values,
             name: '能力评估',
-            areaStyle: { opacity: 0.3 },
+            areaStyle: { 
+              color: 'rgba(64, 158, 255, 0.2)',
+            },
+            lineStyle: {
+              color: '#409eff',
+              width: 2,
+            },
+            itemStyle: {
+              color: '#409eff',
+            },
           },
         ],
       },
     ],
   })
+  window.addEventListener('resize', () => chart.resize())
 }
 </script>
 
@@ -372,6 +393,11 @@ function renderRadar(data) {
 }
 .upload-card {
   min-height: 200px;
+}
+.card-header-title {
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--color-text-primary);
 }
 .history-card {
   max-height: calc(100vh - 200px);
@@ -390,10 +416,10 @@ function renderRadar(data) {
   overflow-y: auto;
 }
 .history-item {
-  padding: 10px;
-  border-radius: 4px;
-  transition: background-color 0.2s;
-  border-bottom: 1px solid #ebeef5;
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  transition: all var(--transition-fast);
+  border-bottom: 1px solid var(--color-border-light);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -401,13 +427,88 @@ function renderRadar(data) {
 .history-item:last-child {
   border-bottom: none;
 }
+.history-item:hover {
+  background: var(--color-primary-bg);
+}
 .history-main {
   flex: 1;
   cursor: pointer;
   min-width: 0;
 }
-.history-main:hover {
-  opacity: 0.8;
+.history-actions {
+  flex-shrink: 0;
+  margin-left: 8px;
+}
+.history-item.active {
+  background: var(--color-primary-bg);
+  border-left: 3px solid var(--color-primary);
+}
+.history-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--color-text-primary);
+  font-weight: 500;
+  margin-bottom: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.history-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+.upload-tip {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  margin-top: 4px;
+}
+.report-content {
+  line-height: 1.8;
+  font-size: 14px;
+  color: var(--color-text-regular);
+}
+.report-content :deep(pre) {
+  background: #1e1e2e;
+  color: #cdd6f4;
+  padding: 14px;
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+  font-family: var(--font-mono);
+}
+.report-content :deep(h3) {
+  margin-top: 16px;
+  color: var(--color-text-primary);
+}
+.report-content :deep(ul) {
+  padding-left: 20px;
+}
+.report-content :deep(li) {
+  margin-bottom: 8px;
+}
+.radar-data {
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid var(--color-border-light);
+}
+@media (max-width: 768px) {
+  .report-card, .empty-card {
+    min-height: auto;
+    margin-top: 16px;
+  }
+  .history-card {
+    max-height: 300px;
+    margin-top: 16px !important;
+  }
+  .history-list {
+    max-height: 200px;
+  }
+}
+</style>.8;
 }
 .history-actions {
   flex-shrink: 0;
@@ -464,5 +565,18 @@ function renderRadar(data) {
   margin-top: 20px;
   padding-top: 20px;
   border-top: 1px solid #ebeef5;
+}
+@media (max-width: 768px) {
+  .report-card, .empty-card {
+    min-height: auto;
+    margin-top: 16px;
+  }
+  .history-card {
+    max-height: 300px;
+    margin-top: 16px !important;
+  }
+  .history-list {
+    max-height: 200px;
+  }
 }
 </style>

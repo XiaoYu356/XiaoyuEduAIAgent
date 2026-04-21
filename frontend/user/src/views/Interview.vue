@@ -720,23 +720,26 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   height: calc(100vh - 140px);
-  background: #fff;
-  border-radius: 12px;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+  background: var(--color-bg-card);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
 }
 .stage-indicator {
-  padding: 16px 20px;
-  border-bottom: 1px solid #e4e7ed;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--color-border-light);
+  background: var(--color-bg-card);
 }
 .chat-messages {
   flex: 1;
   overflow-y: auto;
-  padding: 20px;
+  padding: 24px;
 }
 .message-item {
   display: flex;
-  margin-bottom: 16px;
+  margin-bottom: 20px;
   gap: 12px;
+  animation: fadeInUp 0.3s ease;
 }
 .message-user {
   flex-direction: row-reverse;
@@ -748,31 +751,33 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 20px;
+  font-size: 18px;
   flex-shrink: 0;
+  background: var(--color-bg-page);
 }
 .message-content {
   max-width: 70%;
 }
 .message-text {
-  padding: 12px 16px;
-  border-radius: 12px;
-  line-height: 1.6;
+  padding: 14px 18px;
+  border-radius: var(--radius-md);
+  line-height: 1.7;
   font-size: 14px;
 }
 .message-user .message-text {
-  background: #409eff;
+  background: var(--color-primary);
   color: #fff;
   border-top-right-radius: 4px;
 }
 .message-assistant .message-text {
-  background: #f4f4f5;
-  color: #303133;
+  background: var(--color-bg-page);
+  color: var(--color-text-primary);
   border-top-left-radius: 4px;
 }
 .chat-input {
-  padding: 16px 20px;
-  border-top: 1px solid #e4e7ed;
+  padding: 20px 24px;
+  border-top: 1px solid var(--color-border-light);
+  background: var(--color-bg-card);
 }
 .report-section {
   padding: 20px;
@@ -782,17 +787,19 @@ onMounted(async () => {
   max-width: 100%;
 }
 .score-cards {
-  margin-bottom: 16px;
+  margin-bottom: 20px;
 }
 .score-card {
   text-align: center;
+  border-radius: var(--radius-md) !important;
 }
 .score-card :deep(.el-statistic__content) {
   font-size: 32px;
+  font-weight: 700;
 }
 .score-suffix {
   font-size: 16px;
-  color: #909399;
+  color: var(--color-text-secondary);
 }
 .radar-card {
   margin-bottom: 16px;
@@ -803,7 +810,7 @@ onMounted(async () => {
 .overall-comment {
   font-size: 15px;
   line-height: 1.8;
-  color: #606266;
+  color: var(--color-text-regular);
   margin: 0;
 }
 .analysis-card {
@@ -816,22 +823,24 @@ onMounted(async () => {
 .analysis-card li {
   margin: 8px 0;
   line-height: 1.6;
-  color: #606266;
+  color: var(--color-text-regular);
 }
 .card-title {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-weight: 500;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--color-text-primary);
 }
 .strength-card :deep(.el-card__header) {
-  background: linear-gradient(135deg, #f0f9eb 0%, #e1f3d8 100%);
+  background: linear-gradient(135deg, rgba(52, 211, 153, 0.08) 0%, rgba(52, 211, 153, 0.15) 100%);
 }
 .weakness-card :deep(.el-card__header) {
-  background: linear-gradient(135deg, #fef0f0 0%, #fde2e2 100%);
+  background: linear-gradient(135deg, rgba(248, 113, 113, 0.08) 0%, rgba(248, 113, 113, 0.15) 100%);
 }
 .suggestions-card :deep(.el-card__header) {
-  background: linear-gradient(135deg, #fdf6ec 0%, #faecd8 100%);
+  background: linear-gradient(135deg, rgba(251, 191, 36, 0.08) 0%, rgba(251, 191, 36, 0.15) 100%);
 }
 .suggestions-list {
   padding-left: 20px;
@@ -840,14 +849,15 @@ onMounted(async () => {
 .suggestions-list li {
   margin: 10px 0;
   line-height: 1.6;
-  color: #606266;
+  color: var(--color-text-regular);
 }
 .feedback-card :deep(.el-card__header) {
-  background: linear-gradient(135deg, #ecf5ff 0%, #d9ecff 100%);
+  background: linear-gradient(135deg, rgba(79, 110, 247, 0.08) 0%, rgba(79, 110, 247, 0.15) 100%);
 }
 .report-content {
   line-height: 1.8;
   font-size: 14px;
+  color: var(--color-text-regular);
 }
 .report-content :deep(p) {
   margin: 10px 0;
@@ -864,5 +874,28 @@ onMounted(async () => {
 .history-dialog :deep(.el-dialog__body) {
   max-height: 70vh;
   overflow-y: auto;
+}
+@media (max-width: 768px) {
+  .interview-container {
+    max-width: 100%;
+  }
+  .interview-start {
+    padding: 12px;
+  }
+  .resume-selector {
+    flex-direction: column;
+  }
+  .score-cards :deep(.el-col) {
+    margin-bottom: 8px;
+  }
+  .message-content {
+    max-width: 85%;
+  }
+  .history-dialog {
+    width: 95% !important;
+  }
+  .analysis-card {
+    min-height: auto;
+  }
 }
 </style>

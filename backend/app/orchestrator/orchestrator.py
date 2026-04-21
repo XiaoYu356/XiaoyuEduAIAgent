@@ -158,13 +158,16 @@ class Orchestrator:
 
         full_answer = ""
         async for chunk in agent.stream(state):
+            if chunk.startswith("{") and "confidence" in chunk:
+                continue
             full_answer += chunk
             yield chunk
 
         confidence = state.get("confidence", 0)
         if confidence == 0:
             confidence = state.get("context", {}).get("confidence", 0)
-        yield json.dumps({"confidence": confidence}, ensure_ascii=False)
+        query_type = state.get("context", {}).get("query_type", "clear")
+        yield json.dumps({"confidence": confidence, "query_type": query_type}, ensure_ascii=False)
 
 
 _orchestrator: Optional[Orchestrator] = None

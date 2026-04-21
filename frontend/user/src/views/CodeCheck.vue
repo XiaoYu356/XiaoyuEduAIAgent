@@ -1,11 +1,11 @@
 <template>
   <div class="code-container">
     <el-row :gutter="20">
-      <el-col :span="12">
-        <el-card>
+      <el-col :xs="24" :md="12">
+        <el-card shadow="hover">
           <template #header>
             <div style="display: flex; justify-content: space-between; align-items: center">
-              <span>代码输入</span>
+              <span class="card-header-title">💻 代码输入</span>
               <el-select v-model="language" style="width: 150px" size="small">
                 <el-option label="Python" value="python" />
                 <el-option label="JavaScript" value="javascript" />
@@ -27,28 +27,29 @@
             @click="checkCode"
             :loading="loading"
             style="margin-top: 16px; width: 100%"
+            size="large"
           >
-            检查代码
+            {{ loading ? '检查中...' : '检查代码' }}
           </el-button>
         </el-card>
       </el-col>
-      <el-col :span="12">
-        <el-card v-if="result" class="result-card">
+      <el-col :xs="24" :md="12">
+        <el-card v-if="result" class="result-card" shadow="hover">
           <template #header>
-            <span>检查结果</span>
+            <span class="card-header-title">📋 检查结果</span>
           </template>
           <div class="result-content" v-html="renderMarkdown(result)"></div>
         </el-card>
-        <el-card v-else class="empty-card">
+        <el-card v-else class="empty-card" shadow="hover">
           <el-empty description="输入代码并点击检查" />
         </el-card>
       </el-col>
     </el-row>
 
-    <el-card style="margin-top: 20px">
+    <el-card shadow="hover" style="margin-top: 20px">
       <template #header>
         <div style="display: flex; justify-content: space-between; align-items: center">
-          <span>检查历史</span>
+          <span class="card-header-title">📜 检查历史</span>
           <el-button size="small" @click="loadHistory" :loading="historyLoading">
             刷新
           </el-button>
@@ -73,10 +74,13 @@
             {{ formatTime(row.created_at) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="100">
+        <el-table-column label="操作" width="140">
           <template #default="{ row }">
             <el-button type="primary" link size="small" @click="viewDetail(row.id)">
               查看
+            </el-button>
+            <el-button type="danger" link size="small" @click="deleteHistory(row.id)">
+              删除
             </el-button>
           </template>
         </el-table-column>
@@ -112,7 +116,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 import { marked } from 'marked'
 import { useUserStore } from '../stores/user'
@@ -258,6 +262,28 @@ async function viewDetail(id) {
   }
 }
 
+async function deleteHistory(id) {
+  try {
+    await ElMessageBox.confirm('确定要删除该检查记录吗？', '删除确认', {
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+      type: 'warning',
+    })
+    await fetch(`/api/v1/code/history/${id}`, {
+      method: 'DELETE',
+      headers: {
+        'Authorization': `Bearer ${userStore.token}`,
+      },
+    })
+    ElMessage.success('删除成功')
+    loadHistory()
+  } catch (e) {
+    if (e !== 'cancel') {
+      ElMessage.error('删除失败')
+    }
+  }
+}
+
 onMounted(() => {
   loadHistory()
 })
@@ -267,6 +293,11 @@ onMounted(() => {
 .code-container {
   max-width: 1200px;
   margin: 0 auto;
+}
+.card-header-title {
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--color-text-primary);
 }
 .result-card {
   min-height: calc(100vh - 180px);
@@ -280,28 +311,37 @@ onMounted(() => {
 .result-content {
   line-height: 1.8;
   font-size: 14px;
+  color: var(--color-text-regular);
 }
 .result-content :deep(pre) {
-  background: #1e1e1e;
-  color: #d4d4d4;
-  padding: 12px;
-  border-radius: 8px;
+  background: #1e1e2e;
+  color: #cdd6f4;
+  padding: 14px;
+  border-radius: var(--radius-sm);
   overflow-x: auto;
+  font-family: var(--font-mono);
 }
 .result-content :deep(code) {
-  font-family: 'Fira Code', monospace;
+  font-family: var(--font-mono);
   font-size: 13px;
 }
 .code-block {
-  background: #1e1e1e;
-  color: #d4d4d4;
+  background: #1e1e2e;
+  color: #cdd6f4;
   padding: 16px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   overflow-x: auto;
-  font-family: 'Fira Code', monospace;
+  font-family: var(--font-mono);
   font-size: 13px;
   line-height: 1.5;
   white-space: pre-wrap;
   word-wrap: break-word;
+}
+@media (max-width: 768px) {
+  .result-card, .empty-card {
+    min-height: auto;
+    margin-top: 16px;
+  }
+}
 }
 </style>

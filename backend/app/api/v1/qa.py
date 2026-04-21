@@ -93,7 +93,8 @@ async def qa_chat(
     db.add(assistant_msg)
 
     confidence = result.get("confidence", 0)
-    if confidence < get_settings().RELEVANCE_THRESHOLD:
+    query_type = result.get("context", {}).get("query_type", "clear")
+    if query_type != "chitchat" and confidence < get_settings().RELEVANCE_THRESHOLD:
         kb_id = data.kb_ids[0] if data.kb_ids else None
         ai_answer = result.get("final_answer", "")
         warning_idx = ai_answer.find("⚠️ 以上回答仅供参考")

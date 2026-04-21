@@ -1,6 +1,6 @@
 <template>
   <div class="chat-page">
-    <div class="sidebar">
+    <div class="sidebar" v-if="!isMobile || showSidebar">
       <div class="sidebar-header">
         <el-button type="primary" @click="newConversation" style="width: 100%">
           <el-icon><Plus /></el-icon>
@@ -30,6 +30,9 @@
     </div>
     <div class="chat-container">
       <div class="chat-header">
+        <el-button v-if="isMobile" text @click="showSidebar = !showSidebar">
+          <el-icon :size="18"><ChatDotRound /></el-icon>
+        </el-button>
         <el-select
           v-model="selectedKbIds"
           placeholder="选择知识库(可多选)"
@@ -37,7 +40,7 @@
           clearable
           collapse-tags
           collapse-tags-tooltip
-          style="width: 280px"
+          :style="{ width: isMobile ? '200px' : '280px' }"
         >
           <el-option
             v-for="kb in knowledgeBases"
@@ -89,13 +92,13 @@
 </template>
 
 <script setup>
-import { ref, nextTick, onMounted } from 'vue'
+import { ref, nextTick, onMounted, onUnmounted } from 'vue'
 import api from '../utils/api'
 import { chatStream } from '../utils/sse'
 import { marked } from 'marked'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/github.css'
-import { Plus, Delete } from '@element-plus/icons-vue'
+import { Plus, Delete, ChatDotRound } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 
 marked.setOptions({
@@ -116,6 +119,14 @@ const conversationId = ref(null)
 const knowledgeBases = ref([])
 const selectedKbIds = ref([])
 const conversations = ref([])
+const isMobile = ref(false)
+const showSidebar = ref(true)
+
+function checkMobile() {
+  isMobile.value = window.innerWidth <= 768
+  if (isMobile.value) showSidebar.value = false
+  else showSidebar.value = true
+}
 
 function renderMarkdown(text) {
   if (!text) return ''
@@ -151,6 +162,7 @@ async function newConversation() {
     conversations.value.unshift(res.data)
     conversationId.value = res.data.id
     messages.value = []
+    if (isMobile.value) showSidebar.value = false
   } catch {
     // ignore
   }
@@ -160,6 +172,7 @@ function selectConversation(conv) {
   conversationId.value = conv.id
   messages.value = conv.messages || []
   scrollToBottom()
+  if (isMobile.value) showSidebar.value = false
 }
 
 async function deleteConversation(id) {
@@ -205,7 +218,7 @@ async function sendMessage() {
   }
 
   await chatStream(
-    '/chat/stream',
+    '/qa/chat/stream',
     requestData,
     (chunk) => {
       streamContent.value += chunk
@@ -241,6 +254,12 @@ async function loadKnowledgeBases() {
 onMounted(() => {
   loadKnowledgeBases()
   loadConversations()
+  checkMobile()
+  window.addEventListener('resize', checkMobile)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', checkMobile)
 })
 </script>
 
@@ -248,40 +267,46 @@ onMounted(() => {
 .chat-page {
   display: flex;
   height: 100%;
-  background: #f5f7fa;
+  background: var(--color-bg-card);
+  border-radius: var(--radius-md);
+  overflow: hidden;
 }
 .sidebar {
-  width: 260px;
-  background: #fff;
-  border-right: 1px solid #e4e7ed;
+  width: 280px;
+  background: var(--color-bg-card);
+  border-right: 1px solid var(--color-border-light);
   display: flex;
   flex-direction: column;
+  flex-shrink: 0;
 }
 .sidebar-header {
-  padding: 16px;
-  border-bottom: 1px solid #e4e7ed;
+  padding: 20px;
+  border-bottom: 1px solid var(--color-border-light);
 }
 .conversation-list {
   flex: 1;
   overflow-y: auto;
-  padding: 8px;
+  padding: 12px;
 }
 .conversation-item {
-  padding: 12px;
-  border-radius: 8px;
+  padding: 14px 16px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   margin-bottom: 4px;
   position: relative;
+  transition: all var(--transition-fast);
 }
 .conversation-item:hover {
-  background: #f0f2f5;
+  background: var(--color-primary-bg);
 }
 .conversation-item.active {
-  background: #ecf5ff;
+  background: var(--color-primary-bg);
+  border-left: 3px solid var(--color-primary);
 }
 .conv-title {
   font-size: 14px;
-  color: #303133;
+  color: var(--color-text-primary);
+  font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -289,7 +314,7 @@ onMounted(() => {
 }
 .conv-time {
   font-size: 12px;
-  color: #909399;
+  color: var(--color-text-secondary);
   margin-top: 4px;
 }
 .delete-btn {
@@ -298,6 +323,7 @@ onMounted(() => {
   top: 50%;
   transform: translateY(-50%);
   opacity: 0;
+  transition: opacity var(--transition-fast);
 }
 .conversation-item:hover .delete-btn {
   opacity: 1;
@@ -308,28 +334,30 @@ onMounted(() => {
   flex-direction: column;
   max-width: 900px;
   margin: 0 auto;
-  background: #fff;
+  min-width: 0;
 }
 .chat-header {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 12px 20px;
-  border-bottom: 1px solid #e4e7ed;
+  padding: 14px 24px;
+  border-bottom: 1px solid var(--color-border-light);
+  background: var(--color-bg-card);
 }
 .kb-hint {
-  color: #909399;
+  color: var(--color-text-secondary);
   font-size: 12px;
 }
 .chat-messages {
   flex: 1;
   overflow-y: auto;
-  padding: 20px;
+  padding: 24px;
 }
 .message-item {
   display: flex;
-  margin-bottom: 20px;
+  margin-bottom: 24px;
   gap: 12px;
+  animation: fadeInUp 0.3s ease;
 }
 .message-user {
   flex-direction: row-reverse;
@@ -341,50 +369,65 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 20px;
+  font-size: 18px;
   flex-shrink: 0;
+  background: var(--color-bg-page);
 }
 .message-content {
   max-width: 70%;
 }
 .message-text {
-  padding: 12px 16px;
-  border-radius: 12px;
-  line-height: 1.6;
+  padding: 14px 18px;
+  border-radius: var(--radius-md);
+  line-height: 1.7;
   font-size: 14px;
 }
 .message-user .message-text {
-  background: #409eff;
+  background: var(--color-primary);
   color: #fff;
   border-top-right-radius: 4px;
 }
 .message-assistant .message-text {
-  background: #f4f4f5;
-  color: #303133;
+  background: var(--color-bg-page);
+  color: var(--color-text-primary);
   border-top-left-radius: 4px;
 }
 .message-text :deep(pre) {
-  background: #1e1e1e;
-  color: #d4d4d4;
-  padding: 12px;
-  border-radius: 8px;
+  background: #1e1e2e;
+  color: #cdd6f4;
+  padding: 14px;
+  border-radius: var(--radius-sm);
   overflow-x: auto;
   margin: 8px 0;
+  font-family: var(--font-mono);
+  font-size: 13px;
 }
 .message-text :deep(code) {
-  font-family: 'Fira Code', monospace;
+  font-family: var(--font-mono);
   font-size: 13px;
 }
 .typing-indicator {
-  animation: blink 1s infinite;
-  color: #409eff;
-}
-@keyframes blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0; }
+  animation: pulse 1s infinite;
+  color: var(--color-primary);
+  font-weight: bold;
 }
 .chat-input {
-  padding: 16px 20px;
-  border-top: 1px solid #e4e7ed;
+  padding: 20px 24px;
+  border-top: 1px solid var(--color-border-light);
+  background: var(--color-bg-card);
+}
+@media (max-width: 768px) {
+  .sidebar {
+    position: absolute;
+    z-index: 100;
+    height: 100%;
+    box-shadow: var(--shadow-lg);
+  }
+  .message-content {
+    max-width: 85%;
+  }
+  .kb-hint {
+    display: none;
+  }
 }
 </style>

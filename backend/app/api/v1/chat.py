@@ -92,7 +92,9 @@ async def chat(
     )
     db.add(assistant_msg)
 
-    if result.get("confidence", 0) < get_settings().RELEVANCE_THRESHOLD:
+    confidence = result.get("confidence", 0)
+    query_type = result.get("context", {}).get("query_type", "clear")
+    if query_type != "chitchat" and confidence < get_settings().RELEVANCE_THRESHOLD:
         kb_id = data.kb_ids[0] if data.kb_ids else None
         ai_answer = result.get("answer", "")
         gap = KnowledgeGap(
