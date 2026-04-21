@@ -4,6 +4,7 @@ import asyncio
 from langgraph.graph import StateGraph, END
 
 from app.agents.base import BaseAgent, AgentState
+from app.core.config import get_settings
 from app.services.llm.factory import LLMFactory
 from app.services.reranker.service import rerank_with_metadata
 from app.mcp.milvus.client import search as milvus_search, hybrid_search as milvus_hybrid_search
@@ -162,9 +163,12 @@ class QAAgent(BaseAgent):
                 all_results.extend(original_results)
             else:
                 bm25_results = bm25.search(collection, state["query"], top_k=20) if bm25.has_index(collection) else None
+                logger.info(f"BM25检索结果数: {len(bm25_results) if bm25_results else 0}")
+                
                 results = await milvus_hybrid_search(
                     collection, state["query"], top_k=20, bm25_results=bm25_results
                 )
+                logger.info(f"Milvus hybrid_search结果数: {len(results)}")
                 all_results.extend(results)
 
         seen = set()
@@ -176,6 +180,9 @@ class QAAgent(BaseAgent):
                 unique_results.append(r)
 
         logger.info(f"检索完成，共 {len(unique_results)} 个唯一结果")
+        for i, r in enumerate(unique_results[:5]):
+            logger.info(f"  结果{i+1}: chunk_id={r.get('chunk_id')}, content前50字={r.get('content', '')[:50]}...")
+        
         state["context"]["retrieved_docs"] = unique_results
         return state
 
@@ -189,17 +196,19 @@ class QAAgent(BaseAgent):
         query = state["query"]
         reranked = rerank_with_metadata(query, docs, content_key="content", top_k=3)
         
-        relevant_docs = [d for d in reranked if d.get("rerank_score", 0) >= 0.6]
+        logger.info(f"重排序前文档数: {len(docs)}, 重排序后: {len(reranked)}")
+        for i, d in enumerate(reranked):
+            logger.info(f"  重排序结果{i+1}: score={d.get('rerank_score', 0):.3f}, content前30字={d.get('content', '')[:30]}...")
         
-        if relevant_docs:
-            state["context"]["reranked_docs"] = relevant_docs
-            max_score = max(d["rerank_score"] for d in relevant_docs)
+        state["context"]["reranked_docs"] = reranked
+        
+        if reranked:
+            max_score = max(d["rerank_score"] for d in reranked)
             state["context"]["confidence"] = min(max_score, 1.0)
-            logger.info(f"重排序完成，{len(relevant_docs)} 个相关文档，最高分: {max_score:.3f}")
+            logger.info(f"重排序完成，使用top{len(reranked)}文档，最高相关性: {max_score:.3f}")
         else:
-            state["context"]["reranked_docs"] = []
             state["context"]["confidence"] = 0.0
-            logger.info("重排序完成，无相关文档")
+            logger.info("重排序完成，无结果")
 
         return state
 
@@ -207,6 +216,8 @@ class QAAgent(BaseAgent):
         query_type = state["context"].get("query_type", "clear")
         docs = state["context"].get("reranked_docs", [])
         confidence = state["context"].get("confidence", 0.0)
+
+        logger.info(f"生成回答: query_type={query_type}, docs={len(docs)}, confidence={confidence:.3f}")
 
         context_text = ""
         sources_set = set()
@@ -218,11 +229,9 @@ class QAAgent(BaseAgent):
                     sources_set.add(doc["metadata"]["source"])
         
         sources = list(sources_set)
+        logger.info(f"上下文长度: {len(context_text)}, 来源数: {len(sources)}")
 
-        confidence_note = ""
-        
         if query_type == "chitchat":
-            confidence = 1.0
             system_prompt = "你是一个友好的AI助手，请用温暖、亲切的方式简短回答用户的问题。记住之前的对话内容，保持上下文连贯。"
             messages = [{"role": "system", "content": system_prompt}]
             history = state.get("messages", [])
@@ -230,8 +239,8 @@ class QAAgent(BaseAgent):
                 messages.extend(history[-10:])
             messages.append({"role": "user", "content": state["query"]})
             answer = await LLMFactory.chat(messages, temperature=0.7)
-        elif confidence < 0.6 or not docs:
-            confidence_note = "\n\n⚠️ 以上回答仅供参考，知识库中相关信息有限，建议进一步确认。"
+            state["confidence"] = 1.0
+        elif not docs or confidence < get_settings().RELEVANCE_THRESHOLD:
             messages, summary = await self.format_messages_async(state)
             if summary:
                 state["context"]["conversation_summary"] = summary
@@ -243,18 +252,7 @@ class QAAgent(BaseAgent):
             else:
                 messages[-1]["content"] = state["query"]
             answer = await LLMFactory.chat(messages, temperature=0.3)
-            answer = answer + confidence_note
-        elif confidence >= 0.75 and sources:
-            confidence_note = "\n\n📚 参考来源：" + "、".join(sources)
-            messages, summary = await self.format_messages_async(state)
-            if summary:
-                state["context"]["conversation_summary"] = summary
-            messages[-1]["content"] = (
-                f"基于以下知识库内容回答问题：\n{context_text}\n\n"
-                f"用户问题：{state['query']}"
-            )
-            answer = await LLMFactory.chat(messages, temperature=0.3)
-            answer = answer + confidence_note
+            answer = answer + "\n\n⚠️ 以上回答仅供参考，知识库中相关信息有限，建议进一步确认。"
         else:
             messages, summary = await self.format_messages_async(state)
             if summary:
@@ -264,11 +262,12 @@ class QAAgent(BaseAgent):
                 f"用户问题：{state['query']}"
             )
             answer = await LLMFactory.chat(messages, temperature=0.3)
+            if sources:
+                answer = answer + "\n\n📚 参考来源：" + "、".join(sources)
 
         state["final_answer"] = answer
-        state["confidence"] = confidence
 
-        if query_type != "chitchat" and (confidence < 0.6 or not docs):
+        if query_type != "chitchat" and (not docs or confidence < get_settings().RELEVANCE_THRESHOLD):
             state["context"]["knowledge_gap"] = True
 
         return state
@@ -313,8 +312,6 @@ class QAAgent(BaseAgent):
                 messages.extend(history[-10:])
             messages.append({"role": "user", "content": state["query"]})
             
-            state["confidence"] = 1.0
-            
             async for chunk in LLMFactory.chat_stream(messages, temperature=0.7):
                 yield chunk
             yield json.dumps({"confidence": 1.0, "query_type": "chitchat"}, ensure_ascii=False)
@@ -347,9 +344,9 @@ class QAAgent(BaseAgent):
         async for chunk in LLMFactory.chat_stream(messages, temperature=0.3):
             yield chunk
 
-        if confidence < 0.6 or not docs:
+        if not docs or confidence < get_settings().RELEVANCE_THRESHOLD:
             yield "\n\n⚠️ 以上回答仅供参考，知识库中相关信息有限，建议进一步确认。"
-        elif confidence >= 0.75 and sources:
+        elif sources:
             yield "\n\n📚 参考来源：" + "、".join(sources)
         
         yield json.dumps({"confidence": confidence, "query_type": query_type}, ensure_ascii=False)

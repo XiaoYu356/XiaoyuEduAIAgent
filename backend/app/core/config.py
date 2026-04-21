@@ -44,6 +44,10 @@ class Settings(BaseSettings):
 
     JUDGE0_API_URL: str = "http://localhost:2358"
 
+    CHUNK_SIZE: int = 1000
+    CHUNK_OVERLAP: int = 150
+    RELEVANCE_THRESHOLD: float = 0.5
+
     @property
     def DATABASE_URL(self) -> str:
         return (

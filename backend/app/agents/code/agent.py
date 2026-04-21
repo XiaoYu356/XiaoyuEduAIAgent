@@ -1,5 +1,7 @@
 import logging
 import re
+import asyncio
+import hashlib
 from typing import AsyncIterator
 from langgraph.graph import StateGraph, END
 import json
@@ -68,8 +70,14 @@ CODE_ANALYSIS_PROMPT = """请分析以下{language}代码：
   "summary": "总体评价"
 }}"""
 
+CODE_EXECUTION_TIMEOUT = 15
+
 
 def _extract_json(text: str) -> dict:
+    text = re.sub(r'```json\s*', '', text)
+    text = re.sub(r'```\s*', '', text)
+    text = text.strip()
+    
     json_match = re.search(r'\{[\s\S]*\}', text)
     if json_match:
         try:
@@ -77,6 +85,10 @@ def _extract_json(text: str) -> dict:
         except json.JSONDecodeError:
             pass
     return None
+
+
+def _compute_code_hash(code: str, language: str) -> str:
+    return hashlib.sha256(f"{language}:{code}".encode()).hexdigest()
 
 
 class CodeAgent(BaseAgent):
@@ -93,15 +105,29 @@ class CodeAgent(BaseAgent):
         logger.info(f"开始执行代码: language={language}, code_length={len(code)}")
 
         try:
-            result = await execute_code(code, language)
+            result = await asyncio.wait_for(
+                execute_code(code, language),
+                timeout=CODE_EXECUTION_TIMEOUT,
+            )
             state["context"]["execution_result"] = result
             logger.info(f"代码执行完成: status={result.get('status')}, time={result.get('time')}s, memory={result.get('memory')}KB")
+        except asyncio.TimeoutError:
+            logger.warning(f"代码执行超时: timeout={CODE_EXECUTION_TIMEOUT}s")
+            state["context"]["execution_result"] = {
+                "status": "Time Limit Exceeded",
+                "stderr": f"代码执行超时（超过{CODE_EXECUTION_TIMEOUT}秒），可能存在死循环或效率问题",
+                "stdout": "",
+                "time": f"{CODE_EXECUTION_TIMEOUT}",
+                "memory": 0,
+            }
         except Exception as e:
             logger.warning(f"代码执行失败: {e}")
             state["context"]["execution_result"] = {
                 "status": "Execution Failed",
                 "stderr": str(e),
                 "stdout": "",
+                "time": "0",
+                "memory": 0,
             }
 
         return state
@@ -237,11 +263,32 @@ class CodeAgent(BaseAgent):
         if "context" not in state:
             state["context"] = {}
         
+        code = state["query"]
+        if state.get("context", {}).get("code"):
+            code = state["context"]["code"]
+        language = state.get("context", {}).get("language", "python")
+        
+        yield "⏳ **正在提交代码到沙箱执行...**\n\n"
+        
         state = await self._execute_code(state)
+        
+        exec_result = state.get("context", {}).get("execution_result", {})
+        exec_status = exec_result.get("status", "Unknown")
+        
+        if exec_status == "Time Limit Exceeded":
+            yield "⚠️ **代码执行超时**\n\n"
+        elif exec_status == "Execution Failed":
+            yield "⚠️ **代码执行失败**\n\n"
+        elif exec_status == "Accepted":
+            yield f"✅ **代码执行成功**（耗时: {exec_result.get('time', '0')}s, 内存: {exec_result.get('memory', 0)}KB）\n\n"
+        else:
+            yield f"⚠️ **代码执行状态**: {exec_status}\n\n"
+        
+        yield "🤖 **正在分析代码...**\n\n"
+        
         state = await self._analyze(state)
         
         analysis = state.get("context", {}).get("analysis", {})
-        language = state.get("context", {}).get("language", "python")
         
         yield "🔍 **代码检查报告**\n\n"
         
@@ -290,3 +337,4 @@ class CodeAgent(BaseAgent):
             yield f"\n📋 **总结**：{analysis['summary']}\n"
         
         state["final_answer"] = "完成"
+        state["context"]["code_hash"] = _compute_code_hash(code, language)

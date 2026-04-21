@@ -59,12 +59,12 @@
         ref="uploadRef"
         :auto-upload="false"
         :limit="1"
-        accept=".txt,.pdf,.doc,.docx,.md"
+        accept=".txt,.pdf,.doc,.docx,.md,.ppt,.pptx,.csv,.jpg,.jpeg,.png,.gif,.bmp,.webp"
         :on-change="handleFileChange"
       >
         <el-button type="primary">选择文件</el-button>
         <template #tip>
-          <div class="upload-tip">支持 txt、pdf、doc、docx、md 格式</div>
+          <div class="upload-tip">支持 txt、pdf、doc、docx、md、ppt、pptx、csv、jpg、png 等格式</div>
         </template>
       </el-upload>
       <template #footer>

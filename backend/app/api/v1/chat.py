@@ -2,9 +2,14 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 from app.core.database import get_db
+from app.core.config import get_settings
 from app.models.database import User, Conversation, Message, KnowledgeBase, KnowledgeGap
 from app.models.schemas import ChatRequest, ResponseBase, ConversationResponse, ChatMessage
 from app.api.deps import get_current_user
@@ -87,31 +92,23 @@ async def chat(
     )
     db.add(assistant_msg)
 
-    if result.get("confidence", 0) < 0.5:
+    if result.get("confidence", 0) < get_settings().RELEVANCE_THRESHOLD:
         kb_id = data.kb_ids[0] if data.kb_ids else None
-        existing_gap = None
-        if kb_id:
-            existing_gap = await db.execute(
-                select(KnowledgeGap).where(
-                    KnowledgeGap.question == data.message,
-                    KnowledgeGap.kb_id == kb_id,
-                    KnowledgeGap.status == "open",
-                )
-            )
-            existing_gap = existing_gap.scalar_one_or_none()
-        
-        if not existing_gap:
-            ai_answer = result.get("answer", "")
-            gap = KnowledgeGap(
-                question=data.message,
-                kb_id=kb_id,
-                source_conversation_id=conversation.id,
-                status="open",
-                answer=ai_answer,
-            )
-            db.add(gap)
+        ai_answer = result.get("answer", "")
+        gap = KnowledgeGap(
+            question=data.message,
+            kb_id=kb_id,
+            source_conversation_id=conversation.id,
+            status="open",
+            answer=ai_answer,
+        )
+        db.add(gap)
 
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        logger.info(f"KnowledgeGap already exists for question: {data.message[:50]}")
 
     redis = await get_redis()
     session_cache = SessionCache(redis)
@@ -224,34 +221,26 @@ async def chat_stream(
         )
         db.add(assistant_msg)
 
-        if query_type != "chitchat" and confidence < 0.6:
+        if query_type != "chitchat" and confidence < get_settings().RELEVANCE_THRESHOLD:
             kb_id = data.kb_ids[0] if data.kb_ids else None
-            existing_gap = None
-            if kb_id:
-                existing_gap = await db.execute(
-                    select(KnowledgeGap).where(
-                        KnowledgeGap.question == data.message,
-                        KnowledgeGap.kb_id == kb_id,
-                        KnowledgeGap.status == "open",
-                    )
-                )
-                existing_gap = existing_gap.scalar_one_or_none()
-            
-            if not existing_gap:
-                ai_answer = full_answer
-                warning_idx = ai_answer.find("⚠️ 以上回答仅供参考")
-                if warning_idx > 0:
-                    ai_answer = ai_answer[:warning_idx].strip()
-                gap = KnowledgeGap(
-                    question=data.message,
-                    kb_id=kb_id,
-                    source_conversation_id=conversation.id,
-                    status="open",
-                    answer=ai_answer,
-                )
-                db.add(gap)
+            ai_answer = full_answer
+            warning_idx = ai_answer.find("⚠️ 以上回答仅供参考")
+            if warning_idx > 0:
+                ai_answer = ai_answer[:warning_idx].strip()
+            gap = KnowledgeGap(
+                question=data.message,
+                kb_id=kb_id,
+                source_conversation_id=conversation.id,
+                status="open",
+                answer=ai_answer,
+            )
+            db.add(gap)
 
-        await db.commit()
+        try:
+            await db.commit()
+        except IntegrityError:
+            await db.rollback()
+            logger.info(f"KnowledgeGap already exists for question: {data.message[:50]}")
 
         redis = await get_redis()
         session_cache = SessionCache(redis)

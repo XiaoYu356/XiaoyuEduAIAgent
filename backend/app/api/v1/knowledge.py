@@ -3,11 +3,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_
 import json
 import hashlib
+import logging
 from datetime import datetime
 from typing import Optional
 import io
 
 from app.core.database import get_db
+from app.core.config import get_settings
 from app.models.database import User, KnowledgeBase, KnowledgeDocument, KnowledgeGap, DocumentVersion
 from app.models.schemas import (
     KnowledgeBaseCreate, KnowledgeBaseResponse, KnowledgeGapResponse,
@@ -21,33 +23,10 @@ from app.mcp.milvus.client import (
 )
 from app.mcp.milvus.bm25 import get_bm25_index
 from app.core.minio import upload_file
+from app.services.document_loaders import DocumentLoader
 
 router = APIRouter(prefix="/knowledge", tags=["知识库"])
-
-
-def extract_text_from_file(file_data: bytes, file_type: str) -> str:
-    if file_type == "pdf":
-        try:
-            from PyPDF2 import PdfReader
-            reader = PdfReader(io.BytesIO(file_data))
-            text_parts = []
-            for page in reader.pages:
-                text = page.extract_text()
-                if text and text.strip():
-                    text_parts.append(text.strip())
-            return "\n\n".join(text_parts)
-        except Exception as e:
-            return ""
-    elif file_type == "docx":
-        try:
-            from docx import Document
-            doc = Document(io.BytesIO(file_data))
-            text_parts = [p.text for p in doc.paragraphs if p.text.strip()]
-            return "\n\n".join(text_parts)
-        except Exception as e:
-            return ""
-    else:
-        return file_data.decode("utf-8", errors="ignore")
+logger = logging.getLogger(__name__)
 
 
 @router.post("/bases", response_model=ResponseBase)
@@ -112,6 +91,8 @@ async def upload_document(
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
+    logger.info(f"Uploading document to KB {kb_id}: {file.filename}, content_type: {file.content_type}")
+
     result = await db.execute(select(KnowledgeBase).where(KnowledgeBase.id == kb_id))
     kb = result.scalar_one_or_none()
     if not kb:
@@ -120,6 +101,7 @@ async def upload_document(
     file_data = await file.read()
     content_hash = hashlib.sha256(file_data).hexdigest()
     file_size = len(file_data)
+    logger.info(f"File size: {file_size} bytes")
 
     existing_doc = await db.execute(
         select(KnowledgeDocument).where(
@@ -146,27 +128,40 @@ async def upload_document(
 
     object_name = f"knowledge/{kb.collection_name}/{file.filename}"
     await upload_file(object_name, file_data, file.content_type or "application/octet-stream")
+    logger.info(f"File uploaded to MinIO: {object_name}")
 
-    file_ext = file.filename.split(".")[-1].lower() if "." in file.filename else "txt"
-    content = extract_text_from_file(file_data, file_ext)
+    try:
+        content = DocumentLoader.load_from_bytes(file_data, file.filename or "")
+        logger.info(f"DocumentLoader extracted {len(content)} characters")
+    except Exception as e:
+        logger.error(f"DocumentLoader failed: {e}", exc_info=True)
+        return ResponseBase(message=f"文档解析失败: {str(e)}", data={"error": str(e)})
     
     if not content.strip():
+        logger.warning(f"Document content is empty after parsing")
         return ResponseBase(message="文档内容为空或无法解析", data={"empty": True})
     
-    chunks = _split_text(content, chunk_size=500, overlap=50)
+    chunks = _split_text(content)
+    logger.info(f"Split into {len(chunks)} chunks")
 
     if chunks:
         chunk_ids = [f"{file.filename}_chunk_{i}" for i in range(len(chunks))]
-        await insert_documents(
-            collection_name=kb.collection_name,
-            contents=chunks,
-            metadatas=[{"source": file.filename, "chunk_index": i, "doc_title": file.filename, "doc_status": "active"} for i in range(len(chunks))],
-            chunk_ids=chunk_ids,
-        )
+        try:
+            await insert_documents(
+                collection_name=kb.collection_name,
+                contents=chunks,
+                metadatas=[{"source": file.filename, "chunk_index": i, "doc_title": file.filename, "doc_status": "active"} for i in range(len(chunks))],
+                chunk_ids=chunk_ids,
+            )
+            logger.info(f"Inserted {len(chunks)} chunks into Milvus")
+        except Exception as e:
+            logger.error(f"Failed to insert into Milvus: {e}", exc_info=True)
+            raise
 
         bm25 = get_bm25_index()
         bm25_docs = [{"content": c, "chunk_id": chunk_ids[i], "metadata": {"source": file.filename, "chunk_index": i, "doc_title": file.filename, "doc_status": "active"}} for i, c in enumerate(chunks)]
         await bm25.add_documents(kb.collection_name, bm25_docs)
+        logger.info(f"Added {len(chunks)} chunks to BM25 index")
 
     doc = KnowledgeDocument(
         kb_id=kb_id,
@@ -213,37 +208,53 @@ async def _update_document(
     content_hash: str,
     file_size: int,
 ) -> ResponseBase:
+    logger.info(f"Updating document: {file_name}")
     old_content_hash = existing_doc.content_hash
     old_chunk_count = existing_doc.chunk_count
 
     object_name = f"knowledge/{kb.collection_name}/{file_name}_v{existing_doc.version + 1}"
     await upload_file(object_name, file_data, content_type)
+    logger.info(f"File uploaded to MinIO: {object_name}")
 
-    file_ext = file_name.split(".")[-1].lower() if "." in file_name else "txt"
-    content = extract_text_from_file(file_data, file_ext)
+    try:
+        content = DocumentLoader.load_from_bytes(file_data, file_name)
+        logger.info(f"DocumentLoader extracted {len(content)} characters")
+    except Exception as e:
+        logger.error(f"DocumentLoader failed: {e}", exc_info=True)
+        return ResponseBase(message=f"文档解析失败: {str(e)}", data={"error": str(e)})
     
     if not content.strip():
+        logger.warning(f"Document content is empty after parsing")
         return ResponseBase(message="文档内容为空或无法解析", data={"empty": True})
     
-    new_chunks = _split_text(content, chunk_size=500, overlap=50)
+    new_chunks = _split_text(content)
+    logger.info(f"Split into {len(new_chunks)} chunks")
 
     await delete_documents_by_metadata(kb.collection_name, {"source": file_name})
+    logger.info(f"Deleted old chunks from Milvus")
 
     bm25 = get_bm25_index()
     await bm25.remove_document(kb.collection_name, file_name)
+    logger.info(f"Removed old chunks from BM25")
 
     if new_chunks:
         doc_status = existing_doc.status if existing_doc.status else "active"
         chunk_ids = [f"{file_name}_chunk_{i}" for i in range(len(new_chunks))]
-        await insert_documents(
-            collection_name=kb.collection_name,
-            contents=new_chunks,
-            metadatas=[{"source": file_name, "chunk_index": i, "doc_title": file_name, "doc_status": doc_status} for i in range(len(new_chunks))],
-            chunk_ids=chunk_ids,
-        )
+        try:
+            await insert_documents(
+                collection_name=kb.collection_name,
+                contents=new_chunks,
+                metadatas=[{"source": file_name, "chunk_index": i, "doc_title": file_name, "doc_status": doc_status} for i in range(len(new_chunks))],
+                chunk_ids=chunk_ids,
+            )
+            logger.info(f"Inserted {len(new_chunks)} chunks into Milvus")
+        except Exception as e:
+            logger.error(f"Failed to insert into Milvus: {e}", exc_info=True)
+            raise
 
         bm25_docs = [{"content": c, "chunk_id": chunk_ids[i], "metadata": {"source": file_name, "chunk_index": i, "doc_title": file_name, "doc_status": doc_status}} for i, c in enumerate(new_chunks)]
         await bm25.add_documents(kb.collection_name, bm25_docs)
+        logger.info(f"Added {len(new_chunks)} chunks to BM25 index")
 
     chunk_diff = len(new_chunks) - old_chunk_count
     if chunk_diff > 0:
@@ -512,7 +523,7 @@ async def resolve_knowledge_gap(
         full_content = existing_content + new_entry
         content_hash = hashlib.sha256(full_content.encode()).hexdigest()
         
-        chunks = _split_text(full_content, chunk_size=500, overlap=50)
+        chunks = _split_text(full_content)
         if chunks:
             chunk_ids = [f"{doc_title}_chunk_{i}" for i in range(len(chunks))]
             await insert_documents(
@@ -563,7 +574,7 @@ async def resolve_knowledge_gap(
         full_content = f"# 知识补录{new_entry}"
         content_hash = hashlib.sha256(full_content.encode()).hexdigest()
         
-        chunks = _split_text(full_content, chunk_size=500, overlap=50)
+        chunks = _split_text(full_content)
         if chunks:
             chunk_ids = [f"{doc_title}_chunk_{i}" for i in range(len(chunks))]
             await insert_documents(
@@ -648,7 +659,15 @@ async def ignore_knowledge_gap(
     return ResponseBase(data=KnowledgeGapResponse.model_validate(gap).model_dump())
 
 
-def _split_text(text: str, chunk_size: int = 500, overlap: int = 50) -> list[str]:
+def _split_text(
+    text: str,
+    chunk_size: int = None,
+    overlap: int = None,
+) -> list[str]:
+    settings = get_settings()
+    chunk_size = chunk_size or settings.CHUNK_SIZE
+    overlap = overlap or settings.CHUNK_OVERLAP
+
     chunks = []
     start = 0
     while start < len(text):

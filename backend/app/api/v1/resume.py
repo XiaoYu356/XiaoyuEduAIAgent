@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, Depends, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -9,8 +10,10 @@ from app.models.schemas import ResponseBase
 from app.api.deps import get_current_user
 from app.core.minio import upload_file
 from app.agents.resume.agent import ResumeAgent
+from app.services.document_loaders import DocumentLoader
 
 router = APIRouter(prefix="/resume", tags=["简历审查"])
+logger = logging.getLogger(__name__)
 
 
 @router.post("/upload", response_model=ResponseBase)
@@ -19,11 +22,21 @@ async def upload_resume(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    logger.info(f"Uploading resume: {file.filename}, content_type: {file.content_type}")
+
     file_data = await file.read()
+    logger.info(f"File size: {len(file_data)} bytes")
+
     object_name = f"resumes/{current_user.id}/{file.filename}"
     await upload_file(object_name, file_data, file.content_type or "application/octet-stream")
+    logger.info(f"File uploaded to MinIO: {object_name}")
 
-    raw_text = file_data.decode("utf-8", errors="ignore")
+    try:
+        raw_text = DocumentLoader.load_from_bytes(file_data, file.filename or "")
+        logger.info(f"DocumentLoader extracted {len(raw_text)} characters")
+    except Exception as e:
+        logger.error(f"DocumentLoader failed: {e}", exc_info=True)
+        return ResponseBase(message=f"文档解析失败: {str(e)}", data={"error": str(e)})
 
     resume = Resume(
         user_id=current_user.id,
@@ -34,10 +47,13 @@ async def upload_resume(
     await db.commit()
     await db.refresh(resume)
 
-    return ResponseBase(data={
-        "resume_id": resume.id,
-        "filename": file.filename,
-    })
+    return ResponseBase(
+        data={
+            "resume_id": resume.id,
+            "filename": file.filename,
+            "text_length": len(raw_text),
+        }
+    )
 
 
 @router.post("/review", response_model=ResponseBase)
@@ -46,6 +62,8 @@ async def review_resume(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    logger.info(f"Reviewing resume: {resume_id}")
+
     result = await db.execute(
         select(Resume).where(Resume.id == resume_id, Resume.user_id == current_user.id)
     )
@@ -74,4 +92,5 @@ async def review_resume(
     resume.radar_data = json.dumps(report.get("radar_data", {}), ensure_ascii=False)
     await db.commit()
 
+    logger.info(f"Resume review completed: {resume_id}")
     return ResponseBase(data=agent_result.get("final_answer", ""))
