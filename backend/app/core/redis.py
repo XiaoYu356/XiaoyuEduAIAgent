@@ -131,3 +131,27 @@ class HotQACache:
         import hashlib
         h = hashlib.md5(question.encode()).hexdigest()
         await self.redis.set(self._key(h), answer, ex=self.ttl)
+
+
+class InterviewStateCache:
+    def __init__(self, redis_client: redis.Redis, prefix: str = "interview_state"):
+        self.redis = redis_client
+        self.prefix = prefix
+        self.ttl = 7200
+
+    def _key(self, conversation_id: int) -> str:
+        return f"{self.prefix}:{conversation_id}"
+
+    async def get(self, conversation_id: int) -> dict | None:
+        key = self._key(conversation_id)
+        data = await self.redis.get(key)
+        if data is not None:
+            await self.redis.expire(key, self.ttl)
+            return json.loads(data)
+        return None
+
+    async def set(self, conversation_id: int, state: dict):
+        await self.redis.set(self._key(conversation_id), json.dumps(state, ensure_ascii=False), ex=self.ttl)
+
+    async def delete(self, conversation_id: int):
+        await self.redis.delete(self._key(conversation_id))

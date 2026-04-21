@@ -49,16 +49,22 @@
               :key="item.id" 
               class="history-item"
               :class="{ active: currentResumeId === item.id }"
-              @click="viewHistory(item)"
             >
-              <div class="history-name">
-                <el-icon><document /></el-icon>
-                <span>{{ getFileName(item.file_path) }}</span>
+              <div class="history-main" @click="viewHistory(item)">
+                <div class="history-name">
+                  <el-icon><document /></el-icon>
+                  <span>{{ getFileName(item.file_path) }}</span>
+                </div>
+                <div class="history-meta">
+                  <span>{{ formatDate(item.created_at) }}</span>
+                  <el-tag v-if="item.has_review" type="success" size="small">已审查</el-tag>
+                  <el-tag v-else type="info" size="small">未审查</el-tag>
+                </div>
               </div>
-              <div class="history-meta">
-                <span>{{ formatDate(item.created_at) }}</span>
-                <el-tag v-if="item.has_review" type="success" size="small">已审查</el-tag>
-                <el-tag v-else type="info" size="small">未审查</el-tag>
+              <div class="history-actions">
+                <el-button type="danger" link size="small" @click.stop="deleteResume(item)">
+                  删除
+                </el-button>
               </div>
             </div>
           </div>
@@ -111,7 +117,7 @@
 <script setup>
 import { ref, nextTick, onMounted } from 'vue'
 import api from '../utils/api'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { marked } from 'marked'
 import * as echarts from 'echarts'
 import { UploadFilled, Document, Loading } from '@element-plus/icons-vue'
@@ -173,15 +179,54 @@ async function loadHistory() {
   }
 }
 
-async function viewHistory(item) {
-  if (!item.has_review) {
-    ElMessage.warning('该简历尚未审查')
-    return
+async function deleteResume(item) {
+  try {
+    await ElMessageBox.confirm(
+      `确定要删除"${getFileName(item.file_path)}"吗？`,
+      '删除确认',
+      {
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+        type: 'warning',
+      }
+    )
+    
+    await api.delete(`/resume/${item.id}`)
+    ElMessage.success('删除成功')
+    
+    if (currentResumeId.value === item.id) {
+      currentResumeId.value = null
+      report.value = ''
+      radarData.value = null
+    }
+    
+    loadHistory()
+  } catch (e) {
+    if (e !== 'cancel') {
+      ElMessage.error('删除失败')
+    }
   }
-  
+}
+
+async function viewHistory(item) {
   currentResumeId.value = item.id
   report.value = ''
   radarData.value = null
+  
+  if (!item.has_review) {
+    ElMessageBox.confirm(
+      '该简历尚未审查，是否立即开始审查？',
+      '提示',
+      {
+        confirmButtonText: '开始审查',
+        cancelButtonText: '取消',
+        type: 'info',
+      }
+    ).then(() => {
+      startReviewById()
+    }).catch(() => {})
+    return
+  }
   
   try {
     const res = await api.get(`/resume/${item.id}`)
@@ -347,15 +392,26 @@ function renderRadar(data) {
 .history-item {
   padding: 10px;
   border-radius: 4px;
-  cursor: pointer;
   transition: background-color 0.2s;
   border-bottom: 1px solid #ebeef5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 .history-item:last-child {
   border-bottom: none;
 }
-.history-item:hover {
-  background-color: #f5f7fa;
+.history-main {
+  flex: 1;
+  cursor: pointer;
+  min-width: 0;
+}
+.history-main:hover {
+  opacity: 0.8;
+}
+.history-actions {
+  flex-shrink: 0;
+  margin-left: 8px;
 }
 .history-item.active {
   background-color: #ecf5ff;

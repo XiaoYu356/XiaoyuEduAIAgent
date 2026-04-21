@@ -243,3 +243,23 @@ async def review_resume(
 
     logger.info(f"Resume review completed: {data.resume_id}")
     return ResponseBase(data=agent_result.get("final_answer", ""))
+
+
+@router.delete("/{resume_id}", response_model=ResponseBase)
+async def delete_resume(
+    resume_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Resume).where(Resume.id == resume_id, Resume.user_id == current_user.id)
+    )
+    resume = result.scalar_one_or_none()
+    if not resume:
+        raise ValueError("简历不存在")
+
+    await db.delete(resume)
+    await db.commit()
+
+    logger.info(f"Resume deleted: {resume_id}")
+    return ResponseBase(message="删除成功")
