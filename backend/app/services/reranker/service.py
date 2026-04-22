@@ -109,26 +109,30 @@ def rerank_with_metadata(
     
     logger.debug(f"开始重排序(带元数据): query='{query[:30]}...', docs={len(documents)}, top_k={top_k}")
     
-    reranker = get_reranker()
-    
-    if reranker is None:
-        logger.info("使用BM25降级方案进行重排序")
+    try:
+        reranker = get_reranker()
+        
+        if reranker is None:
+            logger.info("使用BM25降级方案进行重排序")
+            return _fallback_rerank_with_metadata(query, documents, content_key, top_k)
+        
+        contents = [doc[content_key] for doc in documents]
+        pairs = [[query, content] for content in contents]
+        scores = reranker.predict(pairs)
+        scores = _normalize_scores(scores)
+        scores = [_sigmoid(s) for s in scores]
+        
+        for i, score in enumerate(scores):
+            documents[i]["rerank_score"] = float(score)
+        documents.sort(key=lambda x: x["rerank_score"], reverse=True)
+        
+        result = documents[:top_k]
+        score_strs = _format_scores(result, key="rerank_score")
+        logger.info(f"重排序完成(CrossEncoder): top_k={len(result)}, scores={score_strs}")
+        return result
+    except Exception as e:
+        logger.error(f"重排序失败，使用BM25降级方案: {e}", exc_info=True)
         return _fallback_rerank_with_metadata(query, documents, content_key, top_k)
-    
-    contents = [doc[content_key] for doc in documents]
-    pairs = [[query, content] for content in contents]
-    scores = reranker.predict(pairs)
-    scores = _normalize_scores(scores)
-    scores = [_sigmoid(s) for s in scores]
-    
-    for i, score in enumerate(scores):
-        documents[i]["rerank_score"] = float(score)
-    documents.sort(key=lambda x: x["rerank_score"], reverse=True)
-    
-    result = documents[:top_k]
-    score_strs = _format_scores(result, key="rerank_score")
-    logger.info(f"重排序完成(CrossEncoder): top_k={len(result)}, scores={score_strs}")
-    return result
 
 
 def _fallback_rerank(query: str, documents: list[str], top_k: int = 3) -> list[dict]:
@@ -163,22 +167,28 @@ def _fallback_rerank_with_metadata(
     content_key: str = "content",
     top_k: int = 3,
 ) -> list[dict]:
-    from rank_bm25 import BM25Okapi
-    import jieba
-    
-    contents = [doc[content_key] for doc in documents]
-    tokenized_corpus = [list(jieba.cut(content)) for content in contents]
-    bm25 = BM25Okapi(tokenized_corpus)
-    tokenized_query = list(jieba.cut(query))
-    scores = bm25.get_scores(tokenized_query)
-    
-    max_score = float(max(scores)) if len(scores) > 0 and max(scores) > 0 else 1.0
-    for i, score in enumerate(scores):
-        documents[i]["rerank_score"] = min(float(score) / max_score, 1.0) if max_score > 0 and score > 0 else 0.0
-    
-    documents.sort(key=lambda x: x["rerank_score"], reverse=True)
-    result = documents[:top_k]
-    
-    score_strs = _format_scores(result, key="rerank_score")
-    logger.info(f"重排序完成(BM25降级): top_k={len(result)}, scores={score_strs}")
-    return result
+    try:
+        from rank_bm25 import BM25Okapi
+        import jieba
+        
+        contents = [doc[content_key] for doc in documents]
+        tokenized_corpus = [list(jieba.cut(content)) for content in contents]
+        bm25 = BM25Okapi(tokenized_corpus)
+        tokenized_query = list(jieba.cut(query))
+        scores = bm25.get_scores(tokenized_query)
+        
+        max_score = float(max(scores)) if len(scores) > 0 and max(scores) > 0 else 1.0
+        for i, score in enumerate(scores):
+            documents[i]["rerank_score"] = min(float(score) / max_score, 1.0) if max_score > 0 and score > 0 else 0.0
+        
+        documents.sort(key=lambda x: x["rerank_score"], reverse=True)
+        result = documents[:top_k]
+        
+        score_strs = _format_scores(result, key="rerank_score")
+        logger.info(f"重排序完成(BM25降级): top_k={len(result)}, scores={score_strs}")
+        return result
+    except Exception as e:
+        logger.error(f"BM25降级重排序失败: {e}", exc_info=True)
+        for i, doc in enumerate(documents[:top_k]):
+            doc["rerank_score"] = 0.0
+        return documents[:top_k]

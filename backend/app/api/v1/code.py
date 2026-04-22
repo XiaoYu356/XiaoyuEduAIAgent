@@ -216,3 +216,26 @@ async def get_check_detail(
         "final_report": record.final_report,
         "created_at": record.created_at.isoformat(),
     })
+
+
+@router.delete("/history/{record_id}", response_model=ResponseBase)
+async def delete_check_record(
+    record_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(CodeCheckRecord).where(
+            CodeCheckRecord.id == record_id,
+            CodeCheckRecord.user_id == current_user.id,
+        )
+    )
+    record = result.scalar_one_or_none()
+    if not record:
+        raise ValueError("记录不存在")
+    
+    await db.delete(record)
+    await db.commit()
+    logger.info(f"代码检查记录已删除: record_id={record_id}, user_id={current_user.id}")
+    
+    return ResponseBase(message="记录已删除")

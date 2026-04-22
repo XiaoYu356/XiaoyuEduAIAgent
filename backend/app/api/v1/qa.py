@@ -8,7 +8,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-from app.core.database import get_db
+from app.core.database import get_db, AsyncSessionLocal
 from app.core.config import get_settings
 from app.models.database import User, Conversation, Message, KnowledgeBase, KnowledgeGap
 from app.models.schemas import ResponseBase, QAChatRequest
@@ -185,9 +185,11 @@ async def qa_chat_stream(
     agent.collection_name = collection_names[0] if collection_names else "default"
 
     async def event_generator():
+        logger.info(f"event_generator 开始执行, query: {data.message[:30]}...")
         full_answer = ""
         confidence = 0.0
         query_type = "clear"
+        stream_error = None
         
         state = {
             "query": data.message,
@@ -204,6 +206,7 @@ async def qa_chat_stream(
         }
         
         try:
+            logger.info(f"开始调用 agent.stream, collection_names: {collection_names}")
             async for chunk in agent.stream(state):
                 if chunk.startswith("{") and "confidence" in chunk:
                     try:
@@ -216,43 +219,54 @@ async def qa_chat_stream(
                 full_answer += chunk
                 event_data = json.dumps({"content": chunk}, ensure_ascii=False)
                 yield f"data: {event_data}\n\n"
+            logger.info(f"agent.stream 执行完成, full_answer 长度: {len(full_answer)}")
         except Exception as e:
-            error_data = json.dumps({"error": str(e)}, ensure_ascii=False)
+            stream_error = str(e)
+            logger.error(f"Agent stream error: {stream_error}", exc_info=True)
+            error_data = json.dumps({"error": stream_error}, ensure_ascii=False)
             yield f"data: {error_data}\n\n"
+            return
 
-        assistant_msg = Message(
-            conversation_id=conversation.id,
-            role="assistant",
-            content=full_answer,
-            agent_type="qa",
-        )
-        db.add(assistant_msg)
+        async with AsyncSessionLocal() as stream_db:
+            try:
+                assistant_msg = Message(
+                    conversation_id=conversation.id,
+                    role="assistant",
+                    content=full_answer,
+                    agent_type="qa",
+                )
+                stream_db.add(assistant_msg)
 
-        if query_type != "chitchat" and confidence < get_settings().RELEVANCE_THRESHOLD:
-            kb_id = data.kb_ids[0] if data.kb_ids else None
-            ai_answer = full_answer
-            warning_idx = ai_answer.find("⚠️ 以上回答仅供参考")
-            if warning_idx > 0:
-                ai_answer = ai_answer[:warning_idx].strip()
-            gap = KnowledgeGap(
-                question=data.message,
-                kb_id=kb_id,
-                source_conversation_id=conversation.id,
-                status="open",
-                answer=ai_answer,
-            )
-            db.add(gap)
+                if query_type != "chitchat" and confidence < get_settings().RELEVANCE_THRESHOLD:
+                    kb_id = data.kb_ids[0] if data.kb_ids else None
+                    ai_answer = full_answer
+                    warning_idx = ai_answer.find("⚠️ 以上回答仅供参考")
+                    if warning_idx > 0:
+                        ai_answer = ai_answer[:warning_idx].strip()
+                    gap = KnowledgeGap(
+                        question=data.message,
+                        kb_id=kb_id,
+                        source_conversation_id=conversation.id,
+                        status="open",
+                        answer=ai_answer,
+                    )
+                    stream_db.add(gap)
+
+                await stream_db.commit()
+            except IntegrityError:
+                await stream_db.rollback()
+                logger.info(f"KnowledgeGap already exists for question: {data.message[:50]}")
+            except Exception as e:
+                await stream_db.rollback()
+                logger.error(f"Database error: {e}", exc_info=True)
 
         try:
-            await db.commit()
-        except IntegrityError:
-            await db.rollback()
-            logger.info(f"KnowledgeGap already exists for question: {data.message[:50]}")
-
-        redis = await get_redis()
-        session_cache = SessionCache(redis)
-        await session_cache.add_message(conversation.id, {"role": "user", "content": data.message})
-        await session_cache.add_message(conversation.id, {"role": "assistant", "content": full_answer})
+            redis = await get_redis()
+            session_cache = SessionCache(redis)
+            await session_cache.add_message(conversation.id, {"role": "user", "content": data.message})
+            await session_cache.add_message(conversation.id, {"role": "assistant", "content": full_answer})
+        except Exception as e:
+            logger.error(f"Redis cache error: {e}", exc_info=True)
 
         done_data = json.dumps({
             "done": True,

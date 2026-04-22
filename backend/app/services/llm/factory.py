@@ -1,4 +1,5 @@
 from langchain_community.chat_models import ChatTongyi
+from langchain_openai import ChatOpenAI
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from typing import AsyncIterator, Optional
@@ -9,6 +10,8 @@ from app.common.exceptions import LLMException
 
 settings = get_settings()
 
+DASHSCOPE_OPENAI_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
 
 class LLMFactory:
     _instances: dict[str, BaseChatModel] = {}
@@ -18,12 +21,21 @@ class LLMFactory:
         name = model_name or settings.LLM_MODEL_NAME
         key = f"{name}_{temperature}"
         if key not in cls._instances:
-            os.environ["DASHSCOPE_API_KEY"] = settings.DASHSCOPE_API_KEY
-            cls._instances[key] = ChatTongyi(
-                model=name,
-                temperature=temperature,
-                streaming=True,
-            )
+            if name.startswith("qwen3-coder"):
+                cls._instances[key] = ChatOpenAI(
+                    model=name,
+                    temperature=temperature,
+                    streaming=True,
+                    openai_api_key=settings.DASHSCOPE_API_KEY,
+                    openai_api_base=DASHSCOPE_OPENAI_BASE_URL,
+                )
+            else:
+                os.environ["DASHSCOPE_API_KEY"] = settings.DASHSCOPE_API_KEY
+                cls._instances[key] = ChatTongyi(
+                    model=name,
+                    temperature=temperature,
+                    streaming=True,
+                )
         return cls._instances[key]
 
     @classmethod

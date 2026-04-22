@@ -142,8 +142,11 @@ def _fallback_classify_query_type(query: str) -> tuple[str, float]:
 
 
 def classify_query_type(query: str) -> tuple[str, float]:
+    logger.info(f"classify_query_type 开始, query: {query[:30]}...")
     try:
+        logger.info(f"获取模型...")
         model = _get_model()
+        logger.info(f"获取类型嵌入...")
         type_embeddings = _get_type_embeddings()
         
         if model is None or type_embeddings is None:
@@ -168,7 +171,7 @@ def classify_query_type(query: str) -> tuple[str, float]:
         
         return best_type, best_score
     except Exception as e:
-        logger.error(f"问题类型分类异常: {e}，使用降级方案")
+        logger.error(f"问题类型分类异常: {e}，使用降级方案", exc_info=True)
         return _fallback_classify_query_type(query)
 
 

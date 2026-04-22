@@ -59,7 +59,9 @@ class QAAgent(BaseAgent):
 
     async def _understand_query(self, state: AgentState) -> AgentState:
         query = state["query"]
+        logger.info(f"_understand_query 开始, query: {query[:30]}...")
         try:
+            logger.info(f"调用 classify_query_type...")
             query_type, score = classify_query_type(query)
             logger.info(f"问题类型分类: {query_type}, 置信度: {score:.3f}")
             
@@ -69,9 +71,10 @@ class QAAgent(BaseAgent):
             state["context"]["query_type"] = query_type
             state["context"]["sub_questions"] = []
         except Exception as e:
-            logger.warning(f"问题理解失败: {e}，回退为clear")
+            logger.warning(f"问题理解失败: {e}，回退为clear", exc_info=True)
             state["context"]["query_type"] = "clear"
             state["context"]["sub_questions"] = []
+        logger.info(f"_understand_query 完成, query_type: {state['context']['query_type']}")
         return state
 
     async def _expand_query(self, state: AgentState) -> AgentState:
@@ -131,45 +134,71 @@ class QAAgent(BaseAgent):
         if not collections:
             collections = [self.collection_name]
 
-        bm25 = get_bm25_index()
-        for collection in collections:
-            await bm25.ensure_index(collection)
+        try:
+            bm25 = get_bm25_index()
+            for collection in collections:
+                try:
+                    await bm25.ensure_index(collection)
+                except Exception as e:
+                    logger.warning(f"BM25索引加载失败: {collection}, 错误: {e}")
 
-            if query_type == "broad" and state["context"].get("sub_questions"):
-                sub_questions = state["context"]["sub_questions"]
-                logger.info(f"并行检索 {len(sub_questions)} 个子问题")
-                
-                async def search_sub_question(sq: str):
-                    sq_bm25_results = bm25.search(collection, sq, top_k=10) if bm25.has_index(collection) else None
-                    return await milvus_hybrid_search(
-                        collection, sq, top_k=10, bm25_results=sq_bm25_results
-                    )
-                
-                results_list = await asyncio.gather(*[search_sub_question(sq) for sq in sub_questions])
-                for results in results_list:
-                    all_results.extend(results)
-                    
-            elif query_type == "vague" and state["context"].get("hyde_query"):
-                hyde_query = state["context"]["hyde_query"]
-                logger.info(f"使用HyDE查询: {hyde_query[:50]}...")
-                
-                hyde_results = await milvus_search(collection, hyde_query, top_k=20)
-                all_results.extend(hyde_results)
-                
-                original_bm25_results = bm25.search(collection, state["query"], top_k=20) if bm25.has_index(collection) else None
-                original_results = await milvus_hybrid_search(
-                    collection, state["query"], top_k=10, bm25_results=original_bm25_results
-                )
-                all_results.extend(original_results)
-            else:
-                bm25_results = bm25.search(collection, state["query"], top_k=20) if bm25.has_index(collection) else None
-                logger.info(f"BM25检索结果数: {len(bm25_results) if bm25_results else 0}")
-                
-                results = await milvus_hybrid_search(
-                    collection, state["query"], top_k=20, bm25_results=bm25_results
-                )
-                logger.info(f"Milvus hybrid_search结果数: {len(results)}")
-                all_results.extend(results)
+                try:
+                    if query_type == "broad" and state["context"].get("sub_questions"):
+                        sub_questions = state["context"]["sub_questions"]
+                        logger.info(f"并行检索 {len(sub_questions)} 个子问题")
+                        
+                        async def search_sub_question(sq: str):
+                            try:
+                                sq_bm25_results = bm25.search(collection, sq, top_k=10) if bm25.has_index(collection) else None
+                                return await milvus_hybrid_search(
+                                    collection, sq, top_k=10, bm25_results=sq_bm25_results
+                                )
+                            except Exception as e:
+                                logger.warning(f"子问题检索失败: {sq}, 错误: {e}")
+                                return []
+                        
+                        results_list = await asyncio.gather(*[search_sub_question(sq) for sq in sub_questions])
+                        for results in results_list:
+                            all_results.extend(results)
+                            
+                    elif query_type == "vague" and state["context"].get("hyde_query"):
+                        hyde_query = state["context"]["hyde_query"]
+                        logger.info(f"使用HyDE查询: {hyde_query[:50]}...")
+                        
+                        try:
+                            hyde_results = await milvus_search(collection, hyde_query, top_k=20)
+                            all_results.extend(hyde_results)
+                        except Exception as e:
+                            logger.warning(f"HyDE检索失败: {e}")
+                        
+                        try:
+                            original_bm25_results = bm25.search(collection, state["query"], top_k=20) if bm25.has_index(collection) else None
+                            original_results = await milvus_hybrid_search(
+                                collection, state["query"], top_k=10, bm25_results=original_bm25_results
+                            )
+                            all_results.extend(original_results)
+                        except Exception as e:
+                            logger.warning(f"原始查询检索失败: {e}")
+                    else:
+                        bm25_results = None
+                        try:
+                            bm25_results = bm25.search(collection, state["query"], top_k=20) if bm25.has_index(collection) else None
+                            logger.info(f"BM25检索结果数: {len(bm25_results) if bm25_results else 0}")
+                        except Exception as e:
+                            logger.warning(f"BM25检索失败: {e}")
+                        
+                        try:
+                            results = await milvus_hybrid_search(
+                                collection, state["query"], top_k=20, bm25_results=bm25_results
+                            )
+                            logger.info(f"Milvus hybrid_search结果数: {len(results)}")
+                            all_results.extend(results)
+                        except Exception as e:
+                            logger.warning(f"Milvus检索失败: {e}")
+                except Exception as e:
+                    logger.error(f"集合 {collection} 检索失败: {e}", exc_info=True)
+        except Exception as e:
+            logger.error(f"检索过程发生错误: {e}", exc_info=True)
 
         seen = set()
         unique_results = []
@@ -194,21 +223,26 @@ class QAAgent(BaseAgent):
             return state
 
         query = state["query"]
-        reranked = rerank_with_metadata(query, docs, content_key="content", top_k=3)
-        
-        logger.info(f"重排序前文档数: {len(docs)}, 重排序后: {len(reranked)}")
-        for i, d in enumerate(reranked):
-            logger.info(f"  重排序结果{i+1}: score={d.get('rerank_score', 0):.3f}, content前30字={d.get('content', '')[:30]}...")
-        
-        state["context"]["reranked_docs"] = reranked
-        
-        if reranked:
-            max_score = max(d["rerank_score"] for d in reranked)
-            state["context"]["confidence"] = min(max_score, 1.0)
-            logger.info(f"重排序完成，使用top{len(reranked)}文档，最高相关性: {max_score:.3f}")
-        else:
+        try:
+            reranked = rerank_with_metadata(query, docs, content_key="content", top_k=3)
+            
+            logger.info(f"重排序前文档数: {len(docs)}, 重排序后: {len(reranked)}")
+            for i, d in enumerate(reranked):
+                logger.info(f"  重排序结果{i+1}: score={d.get('rerank_score', 0):.3f}, content前30字={d.get('content', '')[:30]}...")
+            
+            state["context"]["reranked_docs"] = reranked
+            
+            if reranked:
+                max_score = max(d["rerank_score"] for d in reranked)
+                state["context"]["confidence"] = min(max_score, 1.0)
+                logger.info(f"重排序完成，使用top{len(reranked)}文档，最高相关性: {max_score:.3f}")
+            else:
+                state["context"]["confidence"] = 0.0
+                logger.info("重排序完成，无结果")
+        except Exception as e:
+            logger.error(f"重排序失败: {e}", exc_info=True)
+            state["context"]["reranked_docs"] = docs[:3]
             state["context"]["confidence"] = 0.0
-            logger.info("重排序完成，无结果")
 
         return state
 
@@ -216,20 +250,24 @@ class QAAgent(BaseAgent):
         query_type = state["context"].get("query_type", "clear")
         docs = state["context"].get("reranked_docs", [])
         confidence = state["context"].get("confidence", 0.0)
+        threshold = get_settings().RELEVANCE_THRESHOLD
 
-        logger.info(f"生成回答: query_type={query_type}, docs={len(docs)}, confidence={confidence:.3f}")
+        logger.info(f"生成回答: query_type={query_type}, docs={len(docs)}, confidence={confidence:.3f}, threshold={threshold}")
+
+        relevant_docs = [d for d in docs if d.get("rerank_score", 0) >= threshold]
+        logger.info(f"高于阈值的文档数: {len(relevant_docs)}/{len(docs)}")
 
         context_text = ""
         sources_set = set()
         
         if query_type != "chitchat":
-            for i, doc in enumerate(docs):
+            for i, doc in enumerate(relevant_docs):
                 context_text += f"\n[参考文档{i+1}] {doc['content']}\n"
                 if doc.get("metadata", {}).get("source"):
                     sources_set.add(doc["metadata"]["source"])
         
         sources = list(sources_set)
-        logger.info(f"上下文长度: {len(context_text)}, 来源数: {len(sources)}")
+        logger.info(f"上下文长度: {len(context_text)}, 有效来源数: {len(sources)}")
 
         if query_type == "chitchat":
             system_prompt = "你是一个友好的AI助手，请用温暖、亲切的方式简短回答用户的问题。记住之前的对话内容，保持上下文连贯。"
@@ -240,7 +278,7 @@ class QAAgent(BaseAgent):
             messages.append({"role": "user", "content": state["query"]})
             answer = await LLMFactory.chat(messages, temperature=0.7)
             state["confidence"] = 1.0
-        elif not docs or confidence < get_settings().RELEVANCE_THRESHOLD:
+        elif not relevant_docs or confidence < threshold:
             messages, summary = await self.format_messages_async(state)
             if summary:
                 state["context"]["conversation_summary"] = summary
@@ -267,8 +305,9 @@ class QAAgent(BaseAgent):
 
         state["final_answer"] = answer
 
-        if query_type != "chitchat" and (not docs or confidence < get_settings().RELEVANCE_THRESHOLD):
+        if query_type != "chitchat" and (not relevant_docs or confidence < threshold):
             state["context"]["knowledge_gap"] = True
+            logger.info(f"触发知识补录: query_type={query_type}, relevant_docs={len(relevant_docs)}, confidence={confidence:.3f}")
 
         return state
 
@@ -297,12 +336,16 @@ class QAAgent(BaseAgent):
         return result
 
     async def stream(self, state: AgentState) -> AsyncIterator[str]:
+        logger.info(f"QAAgent.stream 开始执行, query: {state['query'][:30]}...")
         if "context" not in state:
             state["context"] = {}
 
+        logger.info(f"调用 _understand_query...")
         state = await self._understand_query(state)
+        logger.info(f"_understand_query 完成, query_type: {state['context'].get('query_type')}")
         
         query_type = state["context"].get("query_type", "clear")
+        logger.info(f"query_type: {query_type}")
         
         if query_type == "chitchat":
             system_prompt = "你是一个友好的AI助手，请用温暖、亲切的方式简短回答用户的问题。记住之前的对话内容，保持上下文连贯。"
@@ -323,9 +366,14 @@ class QAAgent(BaseAgent):
 
         docs = state["context"].get("reranked_docs", [])
         confidence = state["context"].get("confidence", 0.0)
+        threshold = get_settings().RELEVANCE_THRESHOLD
+
+        relevant_docs = [d for d in docs if d.get("rerank_score", 0) >= threshold]
+        logger.info(f"stream: 高于阈值的文档数: {len(relevant_docs)}/{len(docs)}, confidence={confidence:.3f}")
+
         context_text = ""
         sources_set = set()
-        for i, doc in enumerate(docs):
+        for i, doc in enumerate(relevant_docs):
             context_text += f"\n[参考文档{i+1}] {doc['content']}\n"
             if doc.get("metadata", {}).get("source"):
                 sources_set.add(doc["metadata"]["source"])
@@ -344,10 +392,14 @@ class QAAgent(BaseAgent):
         async for chunk in LLMFactory.chat_stream(messages, temperature=0.3):
             yield chunk
 
-        if not docs or confidence < get_settings().RELEVANCE_THRESHOLD:
+        if not relevant_docs or confidence < threshold:
             yield "\n\n⚠️ 以上回答仅供参考，知识库中相关信息有限，建议进一步确认。"
         elif sources:
             yield "\n\n📚 参考来源：" + "、".join(sources)
+        
+        if query_type != "chitchat" and (not relevant_docs or confidence < threshold):
+            state["context"]["knowledge_gap"] = True
+            logger.info(f"stream: 触发知识补录")
         
         yield json.dumps({"confidence": confidence, "query_type": query_type}, ensure_ascii=False)
 

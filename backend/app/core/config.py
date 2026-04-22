@@ -12,6 +12,7 @@ class Settings(BaseSettings):
 
     DASHSCOPE_API_KEY: str = ""
     LLM_MODEL_NAME: str = "qwen-max"
+    CODE_ANALYSIS_MODEL: str = "qwen3-coder-plus"
     EMBEDDING_MODEL_NAME: str = "text-embedding-v1"
     INTENT_CLASSIFIER_MODEL: str = "all-MiniLM-L6-v2"
     RERANKER_MODEL_NAME: str = "BAAI/bge-reranker-v2-m3"

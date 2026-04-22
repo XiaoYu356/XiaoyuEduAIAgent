@@ -269,17 +269,21 @@ async function deleteHistory(id) {
       cancelButtonText: '取消',
       type: 'warning',
     })
-    await fetch(`/api/v1/code/history/${id}`, {
+    const response = await fetch(`/api/v1/code/history/${id}`, {
       method: 'DELETE',
       headers: {
         'Authorization': `Bearer ${userStore.token}`,
       },
     })
+    if (!response.ok) {
+      const data = await response.json()
+      throw new Error(data.detail || '删除失败')
+    }
     ElMessage.success('删除成功')
     loadHistory()
   } catch (e) {
     if (e !== 'cancel') {
-      ElMessage.error('删除失败')
+      ElMessage.error(e.message || '删除失败')
     }
   }
 }
@@ -342,6 +346,5 @@ onMounted(() => {
     min-height: auto;
     margin-top: 16px;
   }
-}
 }
 </style>

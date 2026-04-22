@@ -471,8 +471,149 @@ class InterviewAgent(BaseAgent):
         return state
 
     async def stream(self, state: AgentState) -> AsyncIterator[str]:
-        result = await self.run(state)
-        yield result.get("final_answer", "")
+        if "context" not in state:
+            state["context"] = {}
+
+        stage = state.get("context", {}).get("stage", "INTRO")
+        logger.info(f"Interview stream called with stage: {stage}")
+
+        if stage == "INTRO":
+            async for chunk in self._stream_intro(state):
+                yield chunk
+        elif stage == "TECH":
+            has_current_q = state.get("context", {}).get("current_question") is not None
+            if not has_current_q:
+                async for chunk in self._stream_tech_question(state):
+                    yield chunk
+            else:
+                state = await self._tech_evaluate(state)
+                yield state.get("final_answer", "")
+                if state["context"]["stage"] == "PROJECT":
+                    async for chunk in self._stream_project_question(state):
+                        yield chunk
+                else:
+                    async for chunk in self._stream_tech_question(state):
+                        yield chunk
+        elif stage == "PROJECT":
+            has_current_q = state.get("context", {}).get("current_question") is not None
+            if not has_current_q:
+                async for chunk in self._stream_project_question(state):
+                    yield chunk
+            else:
+                state = await self._project_evaluate(state)
+                yield state.get("final_answer", "")
+                if state["context"]["stage"] == "REPORT":
+                    async for chunk in self.stream_report(state):
+                        yield chunk
+                else:
+                    async for chunk in self._stream_project_question(state):
+                        yield chunk
+        elif stage == "REPORT":
+            async for chunk in self.stream_report(state):
+                yield chunk
+
+    async def _stream_intro(self, state: AgentState) -> AsyncIterator[str]:
+        resume_summary = state.get("context", {}).get("resume_summary", "暂无简历信息")
+        focus_areas = state.get("context", {}).get("focus_areas", [])
+        weaknesses = state.get("context", {}).get("weaknesses", [])
+        focus_str = "、".join(focus_areas) if focus_areas else "无特别关注"
+        weakness_str = "、".join(weaknesses) if weaknesses else "暂无"
+        
+        full_response = ""
+        async for chunk in LLMFactory.chat_stream(
+            messages=[
+                {"role": "system", "content": INTERVIEW_SYSTEM_PROMPT},
+                {"role": "user", "content": INTRO_PROMPT.format(
+                    resume_summary=resume_summary,
+                    focus_areas=focus_str,
+                    weaknesses=weakness_str
+                )},
+            ],
+            temperature=0.7,
+        ):
+            full_response += chunk
+            yield chunk
+        
+        state["final_answer"] = full_response
+        state["context"]["stage"] = "TECH"
+        if "qa_history" not in state["context"]:
+            state["context"]["qa_history"] = []
+        if "scores" not in state["context"]:
+            state["context"]["scores"] = []
+        if "tech_count" not in state["context"]:
+            state["context"]["tech_count"] = 0
+        if "project_count" not in state["context"]:
+            state["context"]["project_count"] = 0
+        if "asked_tech_questions" not in state["context"]:
+            state["context"]["asked_tech_questions"] = []
+        if "asked_project_questions" not in state["context"]:
+            state["context"]["asked_project_questions"] = []
+        if "weaknesses" not in state["context"]:
+            state["context"]["weaknesses"] = []
+        state["context"]["current_question"] = None
+        logger.info("Interview intro completed, stage set to TECH")
+
+    async def _stream_tech_question(self, state: AgentState) -> AsyncIterator[str]:
+        resume_summary = state.get("context", {}).get("resume_summary", "")
+        qa_history = self._format_qa_history(state.get("context", {}).get("qa_history", []))
+        asked_questions = "\n".join(state.get("context", {}).get("asked_tech_questions", []))
+        weaknesses = state.get("context", {}).get("weaknesses", [])
+        weakness_str = "、".join(weaknesses) if weaknesses else "暂无"
+
+        full_response = ""
+        async for chunk in LLMFactory.chat_stream(
+            messages=[
+                {"role": "system", "content": INTERVIEW_SYSTEM_PROMPT},
+                {"role": "user", "content": TECH_QUESTION_PROMPT.format(
+                    resume_summary=resume_summary,
+                    qa_history=qa_history,
+                    asked_questions=asked_questions or "暂无",
+                    weaknesses=weakness_str
+                )},
+            ],
+            temperature=0.7,
+        ):
+            full_response += chunk
+            yield chunk
+        
+        state["final_answer"] = full_response
+        state["context"]["current_question"] = full_response
+        state["context"]["stage"] = "TECH"
+        if "asked_tech_questions" not in state["context"]:
+            state["context"]["asked_tech_questions"] = []
+        state["context"]["asked_tech_questions"].append(full_response)
+        logger.info(f"Tech question generated: {full_response[:50]}...")
+
+    async def _stream_project_question(self, state: AgentState) -> AsyncIterator[str]:
+        resume_summary = state.get("context", {}).get("resume_summary", "")
+        qa_history = self._format_qa_history(state.get("context", {}).get("qa_history", []))
+        asked_questions = "\n".join(state.get("context", {}).get("asked_project_questions", []))
+        weaknesses = state.get("context", {}).get("weaknesses", [])
+        weakness_str = "、".join(weaknesses) if weaknesses else "暂无"
+
+        full_response = ""
+        async for chunk in LLMFactory.chat_stream(
+            messages=[
+                {"role": "system", "content": INTERVIEW_SYSTEM_PROMPT},
+                {"role": "user", "content": PROJECT_QUESTION_PROMPT.format(
+                    resume_summary=resume_summary,
+                    qa_history=qa_history,
+                    asked_questions=asked_questions or "暂无",
+                    weaknesses=weakness_str
+                )},
+            ],
+            temperature=0.7,
+        ):
+            full_response += chunk
+            yield chunk
+        
+        state["final_answer"] = full_response
+        state["context"]["current_question"] = full_response
+        state["context"]["stage"] = "PROJECT"
+        if "asked_project_questions" not in state["context"]:
+            state["context"]["asked_project_questions"] = []
+        state["context"]["asked_project_questions"].append(full_response)
+        logger.info(f"Project question generated: {full_response[:50]}...")
 
     async def stream_report(self, state: AgentState) -> AsyncIterator[str]:
         resume_summary = state.get("context", {}).get("resume_summary", "")

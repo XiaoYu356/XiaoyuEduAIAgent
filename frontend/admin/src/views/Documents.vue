@@ -105,14 +105,14 @@
         ref="uploadRef"
         :auto-upload="false"
         :limit="1"
-        accept=".txt,.pdf,.doc,.docx,.md"
+        accept=".txt,.pdf,.doc,.docx,.md,.ppt,.pptx,.csv,.jpg,.jpeg,.png,.gif,.bmp,.webp"
         :on-change="handleFileChange"
         drag
       >
         <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
         <div class="el-upload__text">拖拽文件到此处或 <em>点击上传</em></div>
         <template #tip>
-          <div class="upload-tip">支持 txt、pdf、doc、docx、md 格式，相同文件名将自动进行增量更新</div>
+          <div class="upload-tip">支持 txt、pdf、doc、docx、md、ppt、pptx、csv、jpg、jpeg、png、gif、bmp、webp 格式，相同文件名将自动进行增量更新</div>
         </template>
       </el-upload>
       <template #footer>
