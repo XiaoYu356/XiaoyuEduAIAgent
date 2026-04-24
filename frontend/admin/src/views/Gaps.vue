@@ -123,10 +123,11 @@ const detailForm = ref({})
 
 async function loadKnowledgeBases() {
   try {
-    const res = await api.get('/knowledge')
+    const res = await api.get('/knowledge/bases')
     knowledgeBases.value = res.data || []
-  } catch {
-    console.error('加载知识库列表失败')
+  } catch (e) {
+    console.error('加载知识库列表失败:', e)
+    ElMessage.error('加载知识库列表失败: ' + (e.message || '未知错误'))
   }
 }
 
@@ -138,8 +139,9 @@ async function loadGaps() {
     }
     const res = await api.get('/knowledge/gaps', { params })
     gaps.value = res.data || []
-  } catch {
-    ElMessage.error('加载知识缺口失败')
+  } catch (e) {
+    console.error('加载知识缺口失败:', e)
+    ElMessage.error('加载知识缺口失败: ' + (e.message || '未知错误'))
   }
 }
 

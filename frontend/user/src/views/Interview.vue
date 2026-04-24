@@ -118,10 +118,10 @@
         </el-input>
       </div>
       <div class="report-section" v-if="currentStage === 'REPORT'">
-        <div v-if="!reportData && !streamingReport" style="text-align: center; padding: 60px;">
-          <el-empty description="面试已结束">
-            <el-button type="primary" size="large" @click="generateReport" :loading="generatingReport">
-              生成面试报告
+        <div v-if="reportError" style="text-align: center; padding: 60px;">
+          <el-empty description="报告生成失败">
+            <el-button type="primary" size="large" @click="generateReport">
+              重试
             </el-button>
           </el-empty>
         </div>
@@ -130,7 +130,7 @@
           <div ref="radarRef" style="height: 400px"></div>
           <div class="report-content streaming" v-html="renderMarkdown(streamingContent)"></div>
         </div>
-        <div v-else class="report-container">
+        <div v-else-if="reportData" class="report-container">
           <div class="score-cards">
             <el-row :gutter="16">
               <el-col :span="8">
@@ -356,15 +356,13 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { CircleCheck, Warning, Promotion, Document, ChatDotRound } from '@element-plus/icons-vue'
 import { marked } from 'marked'
 import * as echarts from 'echarts'
+import { useInterviewStore } from '../stores/interview'
+
+const interviewStore = useInterviewStore()
 
 const loading = ref(false)
-const interviewStarted = ref(false)
-const conversationId = ref(null)
-const currentStage = ref('INTRO')
-const messages = ref([])
 const inputText = ref('')
 const messagesRef = ref(null)
-const reportData = ref(null)
 const radarRef = ref(null)
 const resumes = ref([])
 const interviewHistory = ref([])
@@ -377,11 +375,14 @@ const reportProgress = ref(0)
 const generatingReport = ref(false)
 const uploading = ref(false)
 const newResumeId = ref(null)
+const reportError = ref(false)
 
-const form = ref({
-  resume_id: null,
-  focus_areas: [],
-})
+const interviewStarted = computed(() => interviewStore.interviewStarted)
+const conversationId = computed(() => interviewStore.conversationId)
+const currentStage = computed(() => interviewStore.currentStage)
+const messages = computed(() => interviewStore.messages)
+const reportData = computed(() => interviewStore.reportData)
+const form = computed(() => interviewStore.form)
 
 const stageIndex = computed(() => {
   const map = { INTRO: 0, TECH: 1, PROJECT: 2, REPORT: 3 }
@@ -504,10 +505,11 @@ async function startInterview() {
   try {
     const res = await api.post('/interview/start', form.value)
     const responseData = res.data || res
-    conversationId.value = responseData.conversation_id
-    currentStage.value = responseData.stage
-    messages.value.push({ role: 'assistant', content: responseData.message })
-    interviewStarted.value = true
+    interviewStore.startInterview({
+      conversationId: responseData.conversation_id,
+      stage: responseData.stage,
+      message: responseData.message,
+    })
     scrollToBottom()
   } catch (e) {
     console.error('启动面试失败:', e)
@@ -521,26 +523,70 @@ async function sendResponse() {
   const text = inputText.value.trim()
   if (!text || loading.value) return
 
-  messages.value.push({ role: 'user', content: text })
+  interviewStore.addMessage('user', text)
   inputText.value = ''
   loading.value = true
   scrollToBottom()
 
   try {
-    const res = await api.post('/interview/respond', {
-      conversation_id: conversationId.value,
-      message: text,
+    const token = localStorage.getItem('token')
+    const response = await fetch('/api/v1/interview/respond/stream', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        conversation_id: conversationId.value,
+        message: text,
+      }),
     })
-    
-    const responseData = res.data || res
-    currentStage.value = responseData.stage
-    messages.value.push({ role: 'assistant', content: responseData.message })
 
-    if (responseData.stage === 'REPORT' && responseData.report && responseData.report.radar_data) {
-      reportData.value = responseData.report
-      nextTick(() => renderRadar(responseData.report.radar_data))
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let fullContent = ''
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const data = JSON.parse(line.slice(6))
+            if (data.content) {
+              fullContent += data.content
+              if (messages.value.length > 0 && messages.value[messages.value.length - 1].role === 'assistant') {
+                messages.value[messages.value.length - 1].content = fullContent
+              } else {
+                interviewStore.addMessage('assistant', fullContent)
+              }
+              scrollToBottom()
+            }
+            if (data.done) {
+              interviewStore.updateStage(data.stage)
+              if (messages.value.length > 0 && messages.value[messages.value.length - 1].role === 'assistant') {
+                messages.value[messages.value.length - 1].content = fullContent
+              }
+              interviewStore.saveToStorage()
+              if (data.stage === 'REPORT') {
+                await generateReport()
+              }
+            }
+            if (data.error) {
+              ElMessage.error('出错了: ' + data.error)
+            }
+          } catch (e) {
+            console.error('Parse error', e)
+          }
+        }
+      }
     }
-    scrollToBottom()
   } catch (e) {
     console.error('发送失败:', e)
     ElMessage.error('发送失败')
@@ -619,19 +665,12 @@ async function deleteInterviewReport(row) {
 }
 
 function resetInterview() {
-  interviewStarted.value = false
-  conversationId.value = null
-  currentStage.value = 'INTRO'
-  messages.value = []
-  reportData.value = null
+  interviewStore.reset()
   streamingReport.value = false
   streamingContent.value = ''
   reportProgress.value = 0
+  reportError.value = false
   newResumeId.value = null
-  form.value = {
-    resume_id: null,
-    focus_areas: [],
-  }
   loadInterviewHistory()
 }
 
@@ -640,6 +679,7 @@ async function generateReport() {
   streamingReport.value = true
   streamingContent.value = ''
   reportProgress.value = 0
+  reportError.value = false
 
   try {
     const token = localStorage.getItem('token')
@@ -652,6 +692,10 @@ async function generateReport() {
       },
       body: JSON.stringify({ conversation_id: conversationId.value }),
     })
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`)
+    }
 
     const reader = response.body.getReader()
     const decoder = new TextDecoder()
@@ -676,8 +720,11 @@ async function generateReport() {
             if (data.done) {
               reportProgress.value = 100
               if (data.report) {
-                reportData.value = data.report
+                interviewStore.setReportData(data.report)
                 nextTick(() => renderRadar(data.report.radar_data))
+              } else if (data.error) {
+                reportError.value = true
+                ElMessage.error('报告解析失败，请重试')
               }
               streamingReport.value = false
             }
@@ -688,7 +735,9 @@ async function generateReport() {
       }
     }
   } catch (e) {
-    ElMessage.error('生成报告失败')
+    console.error('生成报告失败:', e)
+    ElMessage.error('生成报告失败，请重试')
+    reportError.value = true
     streamingReport.value = false
   } finally {
     generatingReport.value = false

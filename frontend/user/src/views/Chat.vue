@@ -92,7 +92,7 @@
 </template>
 
 <script setup>
-import { ref, nextTick, onMounted, onUnmounted } from 'vue'
+import { ref, nextTick, onMounted, onUnmounted, computed } from 'vue'
 import api from '../utils/api'
 import { chatStream } from '../utils/sse'
 import { marked } from 'marked'
@@ -100,6 +100,9 @@ import hljs from 'highlight.js'
 import 'highlight.js/styles/github.css'
 import { Plus, Delete, ChatDotRound } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
+import { useChatStore } from '../stores/chat'
+
+const chatStore = useChatStore()
 
 marked.setOptions({
   highlight(code, lang) {
@@ -110,17 +113,21 @@ marked.setOptions({
   },
 })
 
-const messages = ref([])
 const inputText = ref('')
 const streaming = ref(false)
 const streamContent = ref('')
 const messagesRef = ref(null)
-const conversationId = ref(null)
 const knowledgeBases = ref([])
-const selectedKbIds = ref([])
 const conversations = ref([])
 const isMobile = ref(false)
 const showSidebar = ref(true)
+
+const messages = computed(() => chatStore.messages)
+const conversationId = computed(() => chatStore.conversationId)
+const selectedKbIds = computed({
+  get: () => chatStore.selectedKbIds,
+  set: (val) => chatStore.setSelectedKbIds(val),
+})
 
 function checkMobile() {
   isMobile.value = window.innerWidth <= 768
@@ -160,8 +167,7 @@ async function newConversation() {
   try {
     const res = await api.post('/qa/conversations')
     conversations.value.unshift(res.data)
-    conversationId.value = res.data.id
-    messages.value = []
+    chatStore.setConversation(res.data.id)
     if (isMobile.value) showSidebar.value = false
   } catch {
     // ignore
@@ -169,8 +175,8 @@ async function newConversation() {
 }
 
 function selectConversation(conv) {
-  conversationId.value = conv.id
-  messages.value = conv.messages || []
+  chatStore.setConversation(conv.id)
+  chatStore.setMessages(conv.messages || [])
   scrollToBottom()
   if (isMobile.value) showSidebar.value = false
 }
@@ -183,8 +189,7 @@ async function deleteConversation(id) {
       if (conversations.value.length > 0) {
         selectConversation(conversations.value[0])
       } else {
-        conversationId.value = null
-        messages.value = []
+        chatStore.reset()
       }
     }
   } catch {
@@ -201,7 +206,7 @@ async function sendMessage() {
     return
   }
 
-  messages.value.push({ role: 'user', content: text })
+  chatStore.addMessage('user', text)
   inputText.value = ''
   streaming.value = true
   streamContent.value = ''
@@ -226,16 +231,16 @@ async function sendMessage() {
     },
     (done) => {
       if (done.conversation_id) {
-        conversationId.value = done.conversation_id
+        chatStore.setConversation(done.conversation_id)
       }
-      messages.value.push({ role: 'assistant', content: streamContent.value })
+      chatStore.addMessage('assistant', streamContent.value)
       streaming.value = false
       streamContent.value = ''
       scrollToBottom()
       loadConversations()
     },
     (error) => {
-      messages.value.push({ role: 'assistant', content: `❌ 出错了: ${error}` })
+      chatStore.addMessage('assistant', `❌ 出错了: ${error}`)
       streaming.value = false
       streamContent.value = ''
     }

@@ -2,9 +2,6 @@ import json
 import logging
 import re
 from typing import AsyncIterator
-
-from langgraph.graph import StateGraph, END
-
 from app.agents.base import BaseAgent, AgentState
 from app.services.llm.factory import LLMFactory
 
@@ -15,18 +12,18 @@ def _extract_json(text: str) -> dict:
     text = text.strip()
     if not text:
         raise ValueError("Empty response from LLM")
-    
+
     if text.startswith("```"):
         text = re.sub(r'^```(?:json)?\s*', '', text)
         text = re.sub(r'\s*```$', '', text)
         text = text.strip()
-    
+
     json_match = re.search(r'\{[\s\S]*\}', text)
     if json_match:
         text = json_match.group()
-    
+
     text = re.sub(r'[\x00-\x1f\x7f-\x9f]', ' ', text)
-    
+
     return json.loads(text)
 
 
@@ -148,7 +145,8 @@ PROJECT_EVAL_PROMPT = """请严格根据学员的实际回答内容进行评估�
 
 REPORT_PROMPT = """请基于以下面试记录生成完整的面试评估报告：
 
-学员简历摘要：{resume_summary}
+学员简历摘要：
+{resume_summary}
 
 面试问答记录：
 {qa_history}
@@ -176,9 +174,8 @@ REPORT_PROMPT = """请基于以下面试记录生成完整的面试评估报告�
 class InterviewAgent(BaseAgent):
     agent_type = "interview"
     agent_name = "模拟面试官"
-    agent_description = "四阶段模拟面试，支持动态出题和双轨评估"
+    agent_description = "四阶段模拟面试 | 状态机控制 | 多轮交互"
 
-    STAGES = ["INTRO", "TECH", "PROJECT", "REPORT"]
     TECH_QUESTIONS_COUNT = 3
     PROJECT_QUESTIONS_COUNT = 2
 
@@ -188,7 +185,7 @@ class InterviewAgent(BaseAgent):
         weaknesses = state.get("context", {}).get("weaknesses", [])
         focus_str = "、".join(focus_areas) if focus_areas else "无特别关注"
         weakness_str = "、".join(weaknesses) if weaknesses else "暂无"
-        
+
         response = await LLMFactory.chat(
             messages=[
                 {"role": "system", "content": INTERVIEW_SYSTEM_PROMPT},
@@ -301,11 +298,6 @@ class InterviewAgent(BaseAgent):
         feedback = eval_result.get("feedback", "")
         tech_count = state["context"]["tech_count"]
         state["final_answer"] = f"感谢你的回答。{feedback}\n\n（技术问题 {tech_count}/{self.TECH_QUESTIONS_COUNT}）"
-
-        if tech_count >= self.TECH_QUESTIONS_COUNT:
-            state["context"]["stage"] = "PROJECT"
-            logger.info("Tech questions completed, moving to PROJECT stage")
-
         return state
 
     async def _project_question(self, state: AgentState) -> AgentState:
@@ -389,11 +381,6 @@ class InterviewAgent(BaseAgent):
         feedback = eval_result.get("feedback", "")
         project_count = state["context"]["project_count"]
         state["final_answer"] = f"感谢你的回答。{feedback}\n\n（项目问题 {project_count}/{self.PROJECT_QUESTIONS_COUNT}）"
-
-        if project_count >= self.PROJECT_QUESTIONS_COUNT:
-            state["context"]["stage"] = "REPORT"
-            logger.info("Project questions completed, moving to REPORT stage")
-
         return state
 
     async def _generate_report(self, state: AgentState) -> AgentState:
@@ -402,7 +389,7 @@ class InterviewAgent(BaseAgent):
         scores_text = json.dumps(state.get("context", {}).get("scores", []), ensure_ascii=False, indent=2)
 
         logger.info("Generating interview report...")
-        
+
         try:
             result = await LLMFactory.chat(
                 messages=[
@@ -443,28 +430,34 @@ class InterviewAgent(BaseAgent):
             state["context"] = {}
 
         stage = state.get("context", {}).get("stage", "INTRO")
-        logger.info(f"Interview run called with stage: {stage}")
+        has_current_q = state.get("context", {}).get("current_question") is not None
+        logger.info(f"Interview run: stage={stage}, has_current_question={has_current_q}")
 
         if stage == "INTRO":
             return await self._intro(state)
+
         elif stage == "TECH":
-            has_current_q = state.get("context", {}).get("current_question") is not None
             if not has_current_q:
                 return await self._tech_question(state)
-            else:
-                state = await self._tech_evaluate(state)
-                if state["context"]["stage"] == "PROJECT":
-                    return await self._project_question(state)
-                return await self._tech_question(state)
+            state = await self._tech_evaluate(state)
+            if state["context"]["tech_count"] >= self.TECH_QUESTIONS_COUNT:
+                state["context"]["stage"] = "PROJECT"
+                state["context"]["current_question"] = None
+                logger.info("Tech phase completed, moving to PROJECT")
+                return state
+            return await self._tech_question(state)
+
         elif stage == "PROJECT":
-            has_current_q = state.get("context", {}).get("current_question") is not None
             if not has_current_q:
                 return await self._project_question(state)
-            else:
-                state = await self._project_evaluate(state)
-                if state["context"]["stage"] == "REPORT":
-                    return await self._generate_report(state)
-                return await self._project_question(state)
+            state = await self._project_evaluate(state)
+            if state["context"]["project_count"] >= self.PROJECT_QUESTIONS_COUNT:
+                state["context"]["stage"] = "REPORT"
+                state["context"]["current_question"] = None
+                logger.info("Project phase completed, moving to REPORT")
+                return state
+            return await self._project_question(state)
+
         elif stage == "REPORT":
             return await self._generate_report(state)
 
@@ -475,42 +468,55 @@ class InterviewAgent(BaseAgent):
             state["context"] = {}
 
         stage = state.get("context", {}).get("stage", "INTRO")
-        logger.info(f"Interview stream called with stage: {stage}")
+        has_current_q = state.get("context", {}).get("current_question") is not None
+        logger.info(f"Interview stream: stage={stage}, has_current_question={has_current_q}")
 
         if stage == "INTRO":
             async for chunk in self._stream_intro(state):
                 yield chunk
-        elif stage == "TECH":
-            has_current_q = state.get("context", {}).get("current_question") is not None
+            return
+
+        if stage == "TECH":
             if not has_current_q:
                 async for chunk in self._stream_tech_question(state):
                     yield chunk
-            else:
-                state = await self._tech_evaluate(state)
-                yield state.get("final_answer", "")
-                if state["context"]["stage"] == "PROJECT":
-                    async for chunk in self._stream_project_question(state):
-                        yield chunk
-                else:
-                    async for chunk in self._stream_tech_question(state):
-                        yield chunk
-        elif stage == "PROJECT":
-            has_current_q = state.get("context", {}).get("current_question") is not None
+                return
+            state = await self._tech_evaluate(state)
+            yield state.get("final_answer", "")
+            if state["context"]["tech_count"] >= self.TECH_QUESTIONS_COUNT:
+                state["context"]["stage"] = "PROJECT"
+                state["context"]["current_question"] = None
+                logger.info("Tech phase completed, moving to PROJECT")
+                yield "\n\n**技术问题阶段结束，现在进入项目经验阶段**\n\n"
+                async for chunk in self._stream_project_question(state):
+                    yield chunk
+                return
+            yield "\n\n"
+            async for chunk in self._stream_tech_question(state):
+                yield chunk
+            return
+
+        if stage == "PROJECT":
             if not has_current_q:
                 async for chunk in self._stream_project_question(state):
                     yield chunk
-            else:
-                state = await self._project_evaluate(state)
-                yield state.get("final_answer", "")
-                if state["context"]["stage"] == "REPORT":
-                    async for chunk in self.stream_report(state):
-                        yield chunk
-                else:
-                    async for chunk in self._stream_project_question(state):
-                        yield chunk
-        elif stage == "REPORT":
+                return
+            state = await self._project_evaluate(state)
+            yield state.get("final_answer", "")
+            if state["context"]["project_count"] >= self.PROJECT_QUESTIONS_COUNT:
+                state["context"]["stage"] = "REPORT"
+                state["context"]["current_question"] = None
+                logger.info("Project phase completed, moving to REPORT")
+                return
+            yield "\n\n"
+            async for chunk in self._stream_project_question(state):
+                yield chunk
+            return
+
+        if stage == "REPORT":
             async for chunk in self.stream_report(state):
                 yield chunk
+            return
 
     async def _stream_intro(self, state: AgentState) -> AsyncIterator[str]:
         resume_summary = state.get("context", {}).get("resume_summary", "暂无简历信息")
@@ -518,8 +524,7 @@ class InterviewAgent(BaseAgent):
         weaknesses = state.get("context", {}).get("weaknesses", [])
         focus_str = "、".join(focus_areas) if focus_areas else "无特别关注"
         weakness_str = "、".join(weaknesses) if weaknesses else "暂无"
-        
-        full_response = ""
+
         async for chunk in LLMFactory.chat_stream(
             messages=[
                 {"role": "system", "content": INTERVIEW_SYSTEM_PROMPT},
@@ -531,10 +536,8 @@ class InterviewAgent(BaseAgent):
             ],
             temperature=0.7,
         ):
-            full_response += chunk
             yield chunk
-        
-        state["final_answer"] = full_response
+
         state["context"]["stage"] = "TECH"
         if "qa_history" not in state["context"]:
             state["context"]["qa_history"] = []
@@ -551,7 +554,6 @@ class InterviewAgent(BaseAgent):
         if "weaknesses" not in state["context"]:
             state["context"]["weaknesses"] = []
         state["context"]["current_question"] = None
-        logger.info("Interview intro completed, stage set to TECH")
 
     async def _stream_tech_question(self, state: AgentState) -> AsyncIterator[str]:
         resume_summary = state.get("context", {}).get("resume_summary", "")
@@ -575,8 +577,7 @@ class InterviewAgent(BaseAgent):
         ):
             full_response += chunk
             yield chunk
-        
-        state["final_answer"] = full_response
+
         state["context"]["current_question"] = full_response
         state["context"]["stage"] = "TECH"
         if "asked_tech_questions" not in state["context"]:
@@ -606,8 +607,7 @@ class InterviewAgent(BaseAgent):
         ):
             full_response += chunk
             yield chunk
-        
-        state["final_answer"] = full_response
+
         state["context"]["current_question"] = full_response
         state["context"]["stage"] = "PROJECT"
         if "asked_project_questions" not in state["context"]:
@@ -620,8 +620,8 @@ class InterviewAgent(BaseAgent):
         qa_history = self._format_qa_history(state.get("context", {}).get("qa_history", []))
         scores_text = json.dumps(state.get("context", {}).get("scores", []), ensure_ascii=False, indent=2)
 
-        logger.info("Streaming interview report...")
-        
+        logger.info("Generating interview report stream...")
+
         full_response = ""
         async for chunk in LLMFactory.chat_stream(
             messages=[
@@ -635,14 +635,50 @@ class InterviewAgent(BaseAgent):
             temperature=0.1,
         ):
             full_response += chunk
-            yield chunk
 
         try:
             report = _extract_json(full_response)
             state["context"]["report"] = report
-            state["final_answer"] = json.dumps(report, ensure_ascii=False, indent=2)
             logger.info(f"Report generated: overall_score={report.get('overall_score')}")
+
+            formatted_report = self._format_report(report)
+            for char in formatted_report:
+                yield char
         except Exception as e:
             logger.error(f"Report parse failed: {e}", exc_info=True)
             state["context"]["report"] = {}
-            state["final_answer"] = full_response
+            yield "面试报告生成失败，请重试"
+
+        state["context"]["stage"] = "REPORT"
+
+    def _format_report(self, report: dict) -> str:
+        lines = ["## 📋 面试评估报告\n"]
+
+        if report.get("overall_comment"):
+            lines.append(f"### 总体评价\n{report['overall_comment']}\n")
+
+        if report.get("overall_score"):
+            lines.append(f"### 综合评分\n**{report['overall_score']}分**\n")
+
+        if report.get("strengths"):
+            lines.append("### ✅ 优势")
+            for s in report["strengths"]:
+                lines.append(f"- {s}")
+            lines.append("")
+
+        if report.get("weaknesses"):
+            lines.append("### ⚠️ 不足")
+            for w in report["weaknesses"]:
+                lines.append(f"- {w}")
+            lines.append("")
+
+        if report.get("suggestions"):
+            lines.append("### 💡 改进建议")
+            for s in report["suggestions"]:
+                lines.append(f"- {s}")
+            lines.append("")
+
+        if report.get("detailed_feedback"):
+            lines.append(f"### 详细反馈\n{report['detailed_feedback']}\n")
+
+        return "\n".join(lines)

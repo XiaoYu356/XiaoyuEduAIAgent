@@ -2,6 +2,8 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
+import asyncio
+import logging
 
 from app.core.config import get_settings
 from app.core.database import init_db, close_db
@@ -9,12 +11,28 @@ from app.core.redis import close_redis
 from app.api.router import router
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
+
+
+async def preload_models():
+    """预加载模型"""
+    try:
+        from app.services.intent.query_type import preload_model
+        preload_model()
+    except Exception as e:
+        logger.warning(f"模型预加载失败: {e}")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    
+    # 在后台预加载模型
+    preload_task = asyncio.create_task(asyncio.to_thread(preload_models))
+    
     yield
+    
+    preload_task.cancel()
     await close_db()
     await close_redis()
 

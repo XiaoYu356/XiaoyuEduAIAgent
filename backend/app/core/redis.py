@@ -137,7 +137,7 @@ class InterviewStateCache:
     def __init__(self, redis_client: redis.Redis, prefix: str = "interview_state"):
         self.redis = redis_client
         self.prefix = prefix
-        self.ttl = 7200
+        self.ttl = 14400
 
     def _key(self, conversation_id: int) -> str:
         return f"{self.prefix}:{conversation_id}"

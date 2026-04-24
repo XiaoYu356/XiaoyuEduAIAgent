@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 _model: Optional[any] = None
 _type_embeddings: Optional[dict] = None
 _model_available: Optional[bool] = None
+_model_loading: bool = False
 
 QUERY_TYPE_LABELS = {
     "chitchat": "闲聊",
@@ -83,26 +84,34 @@ QUERY_TYPE_DESCRIPTIONS = {
 
 
 def _get_model():
-    global _model, _model_available
+    global _model, _model_available, _model_loading
     if _model_available is False:
         logger.debug("问题类型分类模型不可用，跳过加载")
         return None
-    if _model is None:
-        try:
-            logger.info(f"开始加载问题类型分类模型: {settings.INTENT_CLASSIFIER_MODEL}")
-            if settings.HF_MIRROR_URL:
-                os.environ["HF_ENDPOINT"] = settings.HF_MIRROR_URL
-                logger.info(f"使用HuggingFace镜像: {settings.HF_MIRROR_URL}")
-            
-            from sentence_transformers import SentenceTransformer
-            _model = SentenceTransformer(settings.INTENT_CLASSIFIER_MODEL)
-            _model_available = True
-            logger.info("问题类型分类模型加载成功")
-        except Exception as e:
-            logger.warning(f"问题类型分类模型加载失败，将使用降级方案: {e}")
-            _model_available = False
-            return None
-    return _model
+    if _model_loading:
+        logger.debug("模型正在加载中，跳过重复加载")
+        return None
+    if _model is not None:
+        return _model
+    
+    _model_loading = True
+    try:
+        logger.info(f"开始加载问题类型分类模型: {settings.INTENT_CLASSIFIER_MODEL}")
+        if settings.HF_MIRROR_URL:
+            os.environ["HF_ENDPOINT"] = settings.HF_MIRROR_URL
+            logger.info(f"使用HuggingFace镜像: {settings.HF_MIRROR_URL}")
+        
+        from sentence_transformers import SentenceTransformer
+        _model = SentenceTransformer(settings.INTENT_CLASSIFIER_MODEL)
+        _model_available = True
+        logger.info("问题类型分类模型加载成功")
+        return _model
+    except Exception as e:
+        logger.warning(f"问题类型分类模型加载失败，将使用降级方案: {e}", exc_info=True)
+        _model_available = False
+        return None
+    finally:
+        _model_loading = False
 
 
 def _get_type_embeddings():
@@ -144,9 +153,7 @@ def _fallback_classify_query_type(query: str) -> tuple[str, float]:
 def classify_query_type(query: str) -> tuple[str, float]:
     logger.info(f"classify_query_type 开始, query: {query[:30]}...")
     try:
-        logger.info(f"获取模型...")
         model = _get_model()
-        logger.info(f"获取类型嵌入...")
         type_embeddings = _get_type_embeddings()
         
         if model is None or type_embeddings is None:
@@ -175,5 +182,16 @@ def classify_query_type(query: str) -> tuple[str, float]:
         return _fallback_classify_query_type(query)
 
 
-async def async_classify_query_type(query: str) -> tuple[str, float]:
+def async_classify_query_type(query: str) -> tuple[str, float]:
     return classify_query_type(query)
+
+
+def preload_model():
+    """预加载模型，在应用启动时调用"""
+    logger.info("开始预加载问题类型分类模型...")
+    model = _get_model()
+    if model is not None:
+        _get_type_embeddings()
+        logger.info("问题类型分类模型预加载完成")
+    else:
+        logger.warning("问题类型分类模型预加载失败，将使用降级方案")

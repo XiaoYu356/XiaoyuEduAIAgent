@@ -20,54 +20,65 @@
 
 ### 1. 智能问答系统 (RAG)
 
-- **混合检索策略**：向量检索 + BM25关键词检索，提升召回率
-- **问题类型分类**：chitchat/clear/vague/broad四种类型，针对性优化检索策略
-- **HyDE技术**：为模糊问题生成假设性文档，提升检索准确性
-- **查询拆分**：将宽泛问题拆分为多个子问题并行检索
-- **CrossEncoder重排序**：对检索结果精排，提升相关性
-- **知识缺口检测**：自动识别知识库缺失信息，触发知识补录流程
+- **混合检索策略**：Milvus 向量检索 + BM25 关键词检索，RRF 融合排序
+- **问题类型分类**：使用 all-MiniLM-L6-v2 模型识别 chitchat/clear/vague/broad 四种类型
+- **HyDE 技术**：为模糊问题生成假设性文档，提升检索准确性
+- **子问题拆分**：将宽泛问题拆分为多个子问题并行检索
+- **BGE Reranker 重排序**：使用 bge-reranker-v2-m3 对检索结果精排
+- **知识缺口检测**：基于相关性阈值自动识别知识库缺失信息，触发知识补录流程
+- **流式输出**：SSE 实时推送，首字响应时间 < 500ms
 
 ### 2. 代码智能检查系统
 
-- **沙箱执行**：集成Judge0沙箱，安全隔离执行用户代码，支持多语言
+- **沙箱执行**：集成 Judge0 沙箱，安全隔离执行用户代码，支持 60+ 编程语言
 - **多维度分析**：语法错误、逻辑错误、复杂度分析、代码风格四维评估
 - **结构化错误标签**：如"空指针异常→数组越界→时间复杂度O(n²)"
+- **结果缓存**：基于代码哈希的 Redis 缓存，相同代码 24 小时内直接返回
 - **降级方案**：沙箱不可用时自动切换静态代码分析
 
-### 3. AI模拟面试系统
+### 3. AI 模拟面试系统
 
-- **四阶段面试流程**：INTRO → TECH → PROJECT → REPORT
-- **动态出题机制**：基于简历和薄弱点智能生成问题
+- **四阶段面试流程**：INTRO(自我介绍) → TECH(技术问题×3) → PROJECT(项目问题×2) → REPORT(评估报告)
+- **状态机控制**：采用状态机控制多轮交互流程，支持 Redis 状态持久化
+- **动态出题机制**：基于简历内容和薄弱点智能生成针对性问题
 - **双轨评估体系**：技术深度 + 表达能力独立评分(0-100分)
-- **薄弱点追踪**：持续识别学员薄弱环节，针对性出题强化
-- **可视化报告**：雷达图展示六维能力评估
+- **薄弱点追踪**：持续识别学员薄弱环节，优先针对薄弱点出题强化
+- **雷达图可视化**：六维能力评估雷达图展示
 
 ### 4. 简历智能审查系统
 
 - **六维度评估**：工作经历、技能匹配、项目描述、量化数据、格式排版、表达规范
-- **并行评估策略**：三个评估组并行处理，提升效率3倍
+- **流式评估**：三组维度串行评估，实时显示评估进度
 - **优先级建议**：按高/中/低优先级提供具体修改建议
 - **雷达图可视化**：直观展示各维度得分
+- **多格式支持**：PDF/DOC/DOCX/TXT/图片，支持 OCR
+
+### 5. 知识库管理系统
+
+- **多格式文档解析**：PDF/DOC/DOCX/PPT/TXT/MD/CSV，支持 OCR 图片识别
+- **智能分块**：滑动窗口分块策略，1000 字符块大小 + 150 字符重叠
+- **向量入库**：Milvus 向量数据库 + BM25 倒排索引双轨存储
+- **知识缺口管理**：自动检测并记录知识缺口，支持补录和忽略操作
 
 ## 🏗️ 技术架构
 
 ### 后端技术栈
 
 - **框架**：FastAPI + Python 3.10+
-- **LLM框架**：LangChain + LangGraph
+- **LLM 框架**：LangChain + LangGraph（状态机编排）
 - **数据库**：PostgreSQL 16 + Redis 7
 - **向量数据库**：Milvus 2.4
 - **对象存储**：MinIO
-- **LLM服务**：通义千问 (qwen-max, qwen3-coder-plus)
-- **Embedding模型**：text-embedding-v1
+- **LLM 服务**：通义千问 (qwen-max, qwen3-coder-plus)
+- **Embedding 模型**：text-embedding-v1
 - **重排序模型**：BAAI/bge-reranker-v2-m3
-- **意图分类模型**：all-MiniLM-L6-v2
+- **问题分类模型**：all-MiniLM-L6-v2
 
 ### 前端技术栈
 
 - **框架**：Vue.js 3 + Vite
-- **UI组件**：Element Plus
-- **状态管理**：Pinia
+- **UI 组件**：Element Plus
+- **状态管理**：Pinia + sessionStorage 持久化
 - **路由**：Vue Router
 - **双端架构**：用户端 + 管理端
 
@@ -95,17 +106,16 @@
 ┌─────────────────────────────────────────────────────────────┐
 │                     业务逻辑层                               │
 │  ┌──────────────────────────────────────────────────────┐  │
-│  │              Orchestrator (调度器)                     │  │
+│  │              Agent Registry (注册中心)                 │  │
 │  │  ┌────────────┐  ┌────────────┐  ┌────────────┐     │  │
-│  │  │ Intent     │→ │ Agent      │→ │ Response   │     │  │
-│  │  │ Classifier │  │ Registry   │  │ Formatter  │     │  │
+│  │  │   QAAgent  │  │ CodeAgent  │  │InterviewAgt│     │  │
+│  │  │ LangGraph  │  │ 顺序执行   │  │  状态机    │     │  │
 │  │  └────────────┘  └────────────┘  └────────────┘     │  │
+│  │  ┌────────────┐                                       │  │
+│  │  │ ResumeAgent│                                       │  │
+│  │  │ LangGraph  │                                       │  │
+│  │  └────────────┘                                       │  │
 │  └──────────────────────────────────────────────────────┘  │
-│                              ↓                               │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  │
-│  │    QA    │  │   Code   │  │Interview │  │  Resume  │  │
-│  │  Agent   │  │  Agent   │  │  Agent   │  │  Agent   │  │
-│  └──────────┘  └──────────┘  └──────────┘  └──────────┘  │
 └─────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────┐
@@ -181,15 +191,15 @@ docker-compose logs -f backend
 
 ### 4. 访问应用
 
-- 用户端：<http://localhost:3000>
-- 管理端：<http://localhost:3001>
-- API文档：<http://localhost:8000/docs>
+- 用户端：http://localhost:3000
+- 管理端：http://localhost:3001
+- API文档：http://localhost:8000/docs
 
 ### 5. 初始化数据
 
 首次启动后，需要创建管理员账号和知识库：
 
-1. 访问管理端 <http://localhost:3001>
+1. 访问管理端 http://localhost:3001
 2. 注册管理员账号
 3. 创建知识库并上传文档
 
@@ -241,7 +251,7 @@ MINIO_SECRET_KEY=minioadmin
 MINIO_BUCKET=xiaoyu-edu
 ```
 
-#### LLM配置
+#### LLM 配置
 
 ```env
 # 通义千问
@@ -252,15 +262,19 @@ EMBEDDING_MODEL_NAME=text-embedding-v1
 # 代码分析模型
 CODE_ANALYSIS_MODEL=qwen3-coder-plus
 
-# 意图分类模型
+# 问题分类模型
 INTENT_CLASSIFIER_MODEL=all-MiniLM-L6-v2
 
 # 重排序模型
 RERANKER_MODEL_NAME=BAAI/bge-reranker-v2-m3
 ENABLE_RERANKER=false
 
-# 相关性阈值
+# 相关性阈值（低于此阈值触发知识补录）
 RELEVANCE_THRESHOLD=0.5
+
+# 文档切分配置
+CHUNK_SIZE=1000
+CHUNK_OVERLAP=150
 ```
 
 #### 外部服务配置
@@ -281,7 +295,7 @@ ENABLE_RERANKER=true
 RERANKER_MODEL_NAME=BAAI/bge-reranker-v2-m3
 ```
 
-#### 使用HuggingFace镜像
+#### 使用 HuggingFace 镜像
 
 如果在国内下载模型较慢，可以配置镜像：
 
@@ -331,21 +345,19 @@ Content-Type: application/json
 }
 ```
 
-### 对话接口
+### 智能问答接口
 
 #### 创建对话（流式）
 
 ```http
-POST /api/v1/chat/stream
+POST /api/v1/qa/chat/stream
 Authorization: Bearer <token>
 Content-Type: application/json
 
 {
   "message": "什么是机器学习？",
   "conversation_id": null,
-  "agent_type": "qa",
-  "kb_ids": [1, 2],
-  "context": {}
+  "kb_ids": [1, 2]
 }
 ```
 
@@ -357,13 +369,6 @@ data: {"content": "机器学习是..."}
 data: {"content": "人工智能的一个分支..."}
 
 data: {"done": true, "conversation_id": 123, "confidence": 0.85}
-```
-
-#### 获取对话列表
-
-```http
-GET /api/v1/chat/conversations
-Authorization: Bearer <token>
 ```
 
 ### 知识库接口
@@ -391,13 +396,14 @@ Content-Type: multipart/form-data
 file: <document_file>
 ```
 
-支持的文档格式：支持OCR
+支持的文档格式（支持 OCR）：
 
 - PDF (.pdf)
 - Word (.doc, .docx)
 - PowerPoint (.ppt, .pptx)
 - 文本文件 (.txt, .md)
 - CSV (.csv)
+- 图片 (.png, .jpg, .jpeg, .gif, .bmp, .webp)
 
 ### 代码检查接口
 
@@ -414,30 +420,69 @@ Content-Type: application/json
 
 ### 模拟面试接口
 
+#### 开始面试
+
 ```http
 POST /api/v1/interview/start
 Authorization: Bearer <token>
 Content-Type: application/json
 
 {
-  "resume_text": "简历内容...",
+  "resume_id": 1,
   "focus_areas": ["Python", "机器学习"]
+}
+```
+
+#### 回答问题（流式）
+
+```http
+POST /api/v1/interview/respond/stream
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "conversation_id": 123,
+  "message": "我是xxx..."
+}
+```
+
+#### 生成报告（流式）
+
+```http
+POST /api/v1/interview/report/stream
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "conversation_id": 123
 }
 ```
 
 ### 简历审查接口
 
+#### 上传简历
+
 ```http
-POST /api/v1/resume/review
+POST /api/v1/resume/upload
+Authorization: Bearer <token>
+Content-Type: multipart/form-data
+
+file: <resume_file>
+```
+
+#### 审查简历（流式）
+
+```http
+POST /api/v1/resume/review/stream
 Authorization: Bearer <token>
 Content-Type: application/json
 
 {
-  "resume_text": "简历内容..."
+  "resume_id": 1
 }
 ```
 
-完整API文档请访问：<http://localhost:8000/docs>
+完整API文档请访问：http://localhost:8000/docs
 
 ## 🐳 部署指南
 
@@ -464,7 +509,7 @@ DASHSCOPE_API_KEY=<your_api_key>
 CORS_ORIGINS=https://your-domain.com
 ```
 
-#### 2. 修改docker-compose.yml
+#### 2. 修改 docker-compose.yml
 
 ```yaml
 services:
@@ -482,7 +527,7 @@ services:
 docker-compose up -d
 ```
 
-#### 4. 配置Nginx反向代理
+#### 4. 配置 Nginx 反向代理
 
 ```nginx
 server {
@@ -512,7 +557,7 @@ server {
 
 ### 数据备份
 
-#### PostgreSQL备份
+#### PostgreSQL 备份
 
 ```bash
 # 备份
@@ -522,7 +567,7 @@ docker-compose exec postgres pg_dump -U xiaoyu xiaoyu_edu > backup.sql
 docker-compose exec -T postgres psql -U xiaoyu xiaoyu_edu < backup.sql
 ```
 
-#### Milvus备份
+#### Milvus 备份
 
 ```bash
 # 备份向量数据
@@ -590,28 +635,46 @@ XiaoyuEduAIAgent/
 ├── backend/                 # 后端代码
 │   ├── app/
 │   │   ├── agents/         # Agent模块
-│   │   │   ├── qa/         # 智能问答Agent
-│   │   │   ├── code/       # 代码检查Agent
-│   │   │   ├── interview/  # 模拟面试Agent
-│   │   │   └── resume/     # 简历审查Agent
+│   │   │   ├── qa/         # 智能问答Agent (LangGraph状态机)
+│   │   │   ├── code/       # 代码检查Agent (顺序执行)
+│   │   │   ├── interview/  # 模拟面试Agent (状态机控制多轮交互)
+│   │   │   └── resume/     # 简历审查Agent (LangGraph状态机)
 │   │   ├── api/            # API路由
 │   │   ├── core/           # 核心配置
 │   │   ├── mcp/            # 外部服务客户端
 │   │   ├── models/         # 数据模型
 │   │   ├── services/       # 业务服务
-│   │   └── orchestrator/   # 调度器
+│   │   │   ├── document_loaders/  # 文档解析
+│   │   │   ├── embedding/         # 向量嵌入
+│   │   │   ├── intent/            # 意图分类
+│   │   │   ├── llm/               # LLM服务
+│   │   │   └── reranker/          # 重排序服务
+│   │   └── main.py         # 应用入口
 │   ├── scripts/            # 数据库迁移脚本
 │   └── requirements.txt    # Python依赖
 ├── frontend/               # 前端代码
 │   ├── user/              # 用户端
+│   │   └── src/
+│   │       ├── stores/    # Pinia状态管理
+│   │       ├── views/     # 页面组件
+│   │       └── utils/     # 工具函数
 │   └── admin/             # 管理端
 ├── docker/                # Docker配置
 └── docker-compose.yml     # 服务编排
 ```
 
-### 添加新的Agent
+### Agent 架构说明
 
-1. 创建Agent文件 `backend/app/agents/new_agent/agent.py`：
+| Agent | 架构模式 | 说明 |
+|-------|----------|------|
+| QAAgent | LangGraph 状态机 | 一次性执行完整个流程 |
+| CodeAgent | 顺序执行 | 沙箱执行 → LLM分析 |
+| InterviewAgent | 状态机控制多轮交互 | 每次请求执行一小步，状态保存在 Redis |
+| ResumeAgent | LangGraph 状态机 | 并行评估 → 综合报告 |
+
+### 添加新的 Agent
+
+1. 创建 Agent 文件 `backend/app/agents/new_agent/agent.py`：
 
 ```python
 from app.agents.base import BaseAgent, AgentState
@@ -631,14 +694,13 @@ class NewAgent(BaseAgent):
         pass
 ```
 
-1. 注册Agent到 `backend/app/agents/registry.py`
-2. 添加意图分类到 `backend/app/services/intent/classifier.py`
-3. 创建API路由 `backend/app/api/v1/new_agent.py`
+2. 注册 Agent 到 `backend/app/agents/registry.py`
+3. 创建 API 路由 `backend/app/api/v1/new_agent.py`
 
 ### 代码规范
 
-- Python代码遵循PEP 8规范
-- 使用Black格式化代码
+- Python 代码遵循 PEP 8 规范
+- 使用 Black 格式化代码
 - 使用类型注解
 - 编写单元测试
 
@@ -658,42 +720,44 @@ pytest --cov=app backend/tests/
 
 #### 1. 缓存机制
 
-- **会话缓存**：缓存对话历史，减少数据库查询
-- **摘要缓存**：缓存对话摘要，避免重复计算
+- **会话缓存**：Redis 缓存对话历史和面试状态，TTL 4小时
+- **代码检查缓存**：基于代码哈希缓存检查结果，24小时有效
+- **模型预加载**：应用启动时预加载 all-MiniLM-L6-v2 模型
 
 #### 2. 流式响应
 
-- 使用SSE实现流式输出
+- 使用 SSE 实现流式输出
 - 首字响应时间 < 500ms
-- 用户体验提升60%
+- 用户体验提升 60%
 
-#### 3. 并行处理
-
-- 简历六维度并行评估，处理时间减少67%
-- 子问题并行检索，召回率提升35%
-
-#### 4. 数据库优化
+#### 3. 数据库优化
 
 - 合理使用索引
 - 异步数据库操作
 - 连接池管理
 
+#### 4. 前端优化
+
+- Pinia + sessionStorage 状态持久化
+- 页面刷新后保留状态
+- 路由懒加载
+
 ### 性能指标
 
-| 指标        | 数值      |
-| --------- | ------- |
-| 并发用户数     | 100+    |
-| 平均响应时间    | < 2秒    |
-| 首字响应时间    | < 500ms |
-| 知识库文档处理能力 | 10000+  |
-| 代码检查准确率   | 85%+    |
-| 面试评估准确率   | 80%+    |
+| 指标 | 数值 |
+|------|------|
+| 并发用户数 | 100+ |
+| 平均响应时间 | < 2秒 |
+| 首字响应时间 | < 500ms |
+| 知识库文档处理能力 | 10000+ |
+| 代码检查准确率 | 85%+ |
+| 面试评估准确率 | 80%+ |
 
 ## ❓ 常见问题
 
 ### 1. 服务启动失败
 
-**问题**：Docker容器启动失败
+**问题**：Docker 容器启动失败
 
 **解决方案**：
 
@@ -712,7 +776,7 @@ docker-compose up -d
 
 ### 2. 模型下载失败
 
-**问题**：HuggingFace模型下载超时
+**问题**：HuggingFace 模型下载超时
 
 **解决方案**：
 
@@ -744,8 +808,8 @@ services:
 **解决方案**：
 
 1. 检查文档是否已处理完成
-2. 检查Milvus服务状态
-3. 检查collection是否存在数据
+2. 检查 Milvus 服务状态
+3. 检查 collection 是否存在数据
 
 ```bash
 # 检查Milvus状态
@@ -756,7 +820,7 @@ print(client.list_collections())
 "
 ```
 
-### 5. Judge0沙箱不可用
+### 5. Judge0 沙箱不可用
 
 **问题**：代码检查服务不可用
 
@@ -770,105 +834,13 @@ docker-compose ps judge0
 docker-compose restart judge0
 ```
 
-### 6. Docker Desktop与Judge0兼容性问题
+### 6. 页面刷新后状态丢失
 
-**问题**：在Docker Desktop环境下，Judge0服务启动失败或运行异常
-
-**原因**：
-
-- Docker Desktop 4.x版本与Judge0 1.13.1存在兼容性问题
-- 主要表现为容器间网络通信异常、数据库连接失败等
+**问题**：前端状态在刷新后丢失
 
 **解决方案**：
 
-#### 方案1：降级Docker Desktop版本（推荐）
-
-```bash
-# 卸载当前Docker Desktop版本
-# 下载并安装Docker Desktop 4.23.0或更早版本
-# 下载地址：https://docs.docker.com/desktop/release-notes/
-
-# 安装后重启Docker Desktop
-# 重新启动项目
-docker-compose down
-docker-compose up -d
-```
-
-#### 方案2：使用Docker Engine（Linux环境）
-
-```bash
-# 在Linux服务器上使用原生Docker Engine
-# 安装Docker Engine
-curl -fsSL https://get.docker.com -o get-docker.sh
-sudo sh get-docker.sh
-
-# 安装Docker Compose
-sudo curl -L "https://github.com/docker/compose/releases/download/v2.20.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-sudo chmod +x /usr/local/bin/docker-compose
-
-# 启动服务
-docker-compose up -d
-```
-
-#### 方案3：修改Judge0配置
-
-如果必须使用较新版本的Docker Desktop，可以尝试修改docker-compose.yml：
-
-```yaml
-services:
-  judge0:
-    image: judge0/judge0:1.13.1
-    environment:
-      REDIS_HOST: redis
-      POSTGRES_HOST: postgres
-      # 添加以下配置
-      JUDGE0_MAINTENANCE_MODE: "false"
-      JUDGE0_TIME_LIMIT: "5000"
-      JUDGE0_MEMORY_LIMIT: "256000"
-    # 添加网络配置
-    networks:
-      - default
-    # 添加健康检查
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:2358/status"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-```
-
-#### 方案4：使用WSL2（Windows用户）
-
-```bash
-# 启用WSL2
-wsl --install
-
-# 安装Docker Desktop并启用WSL2后端
-# Settings -> General -> Use WSL 2 based engine
-
-# 在WSL2中运行项目
-cd /mnt/d/code/XiaoyuEduAIAgent
-docker-compose up -d
-```
-
-**验证Judge0是否正常**：
-
-```bash
-# 检查Judge0服务状态
-docker-compose ps judge0
-
-# 测试Judge0 API
-curl http://localhost:2358/status
-
-# 应该返回类似以下内容
-# {"status":"ok","version":"1.13.1"}
-```
-
-**如果问题仍然存在**：
-
-1. 检查Docker Desktop日志
-2. 确保系统资源充足（至少8GB内存）
-3. 尝试清理Docker缓存：`docker system prune -a`
-4. 考虑使用虚拟机或云服务器部署
+已实现 Pinia + sessionStorage 状态持久化，刷新页面后状态会自动恢复。如果仍有问题，请检查浏览器是否禁用了 sessionStorage。
 
 ## 🤝 贡献指南
 
@@ -876,11 +848,11 @@ curl http://localhost:2358/status
 
 ### 贡献流程
 
-1. Fork本项目
+1. Fork 本项目
 2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)
 3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
 4. 推送到分支 (`git push origin feature/AmazingFeature`)
-5. 创建Pull Request
+5. 创建 Pull Request
 
 ### 代码贡献规范
 
@@ -893,7 +865,7 @@ curl http://localhost:2358/status
 
 如遇到问题，请通过以下方式反馈：
 
-1. 创建Issue，详细描述问题
+1. 创建 Issue，详细描述问题
 2. 提供复现步骤
 3. 附上相关日志
 
@@ -914,9 +886,9 @@ curl http://localhost:2358/status
 
 ## 📞 联系方式
 
-- 项目主页：\[<https://github.com/XiaoYu356>]
-- 问题反馈：\[GitHub Issues]
-- 邮箱：[3442453092@qq.com](mailto:support@xiaoyu-edu.com)
+- 项目主页：https://github.com/XiaoYu356
+- 问题反馈：GitHub Issues
+- 邮箱：3442453092@qq.com
 
 ***
 

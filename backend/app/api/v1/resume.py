@@ -35,7 +35,7 @@ async def get_resume_list(
             "id": r.id,
             "file_path": r.file_path,
             "created_at": r.created_at.isoformat() if r.created_at else None,
-            "has_review": bool(r.review_result),
+            "has_review": r.has_review or False,
             "text_length": len(r.raw_text) if r.raw_text else 0,
         }
         for r in resumes
@@ -180,6 +180,7 @@ async def review_resume_stream(
                 if resume_to_update:
                     resume_to_update.review_result = clean_answer
                     resume_to_update.radar_data = json.dumps(radar_data, ensure_ascii=False) if radar_data else "{}"
+                    resume_to_update.has_review = True
                     await new_db.commit()
                     logger.info(f"Resume {resume_id} saved to database successfully")
                 else:
@@ -239,6 +240,7 @@ async def review_resume(
     report = agent_result.get("context", {}).get("report", {})
     resume.review_result = agent_result.get("final_answer", "")
     resume.radar_data = json.dumps(report.get("radar_data", {}), ensure_ascii=False)
+    resume.has_review = True
     await db.commit()
 
     logger.info(f"Resume review completed: {data.resume_id}")

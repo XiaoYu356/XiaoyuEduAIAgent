@@ -36,6 +36,10 @@
         class="sidebar-menu"
         @select="drawerVisible = false"
       >
+        <el-menu-item index="/home">
+          <el-icon><HomeFilled /></el-icon>
+          <span>首页</span>
+        </el-menu-item>
         <el-menu-item index="/chat">
           <el-icon><ChatDotRound /></el-icon>
           <span>智能问答</span>
@@ -66,6 +70,10 @@
         router
         class="sidebar-menu"
       >
+        <el-menu-item index="/home">
+          <el-icon><HomeFilled /></el-icon>
+          <span>首页</span>
+        </el-menu-item>
         <el-menu-item index="/chat">
           <el-icon><ChatDotRound /></el-icon>
           <span>智能问答</span>
@@ -112,7 +120,7 @@
 import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '../stores/user'
-import { ChatDotRound, Document, Microphone, Monitor, Menu, SwitchButton, UserFilled } from '@element-plus/icons-vue'
+import { ChatDotRound, Document, Microphone, Monitor, Menu, SwitchButton, UserFilled, HomeFilled } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -123,6 +131,7 @@ const isMobile = ref(false)
 const activeMenu = computed(() => route.path)
 
 const titleMap = {
+  '/home': '首页',
   '/chat': '智能问答',
   '/resume': '简历审查',
   '/interview': '模拟面试',

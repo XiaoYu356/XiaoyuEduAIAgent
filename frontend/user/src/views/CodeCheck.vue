@@ -115,16 +115,29 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 import { marked } from 'marked'
 import { useUserStore } from '../stores/user'
+import { useCodeStore } from '../stores/code'
 
-const code = ref('')
-const language = ref('python')
+const codeStore = useCodeStore()
+
+const code = computed({
+  get: () => codeStore.code,
+  set: (val) => codeStore.setCode(val),
+})
+const language = computed({
+  get: () => codeStore.language,
+  set: (val) => codeStore.setLanguage(val),
+})
+const result = computed({
+  get: () => codeStore.result,
+  set: (val) => codeStore.setResult(val),
+})
+
 const loading = ref(false)
-const result = ref('')
 
 const historyList = ref([])
 const historyLoading = ref(false)

@@ -379,6 +379,7 @@ class CodeAgent(BaseAgent):
         result = await graph.ainvoke(state)
         return result
 
+
     async def stream(self, state: AgentState) -> AsyncIterator[str]:
         if "context" not in state:
             state["context"] = {}

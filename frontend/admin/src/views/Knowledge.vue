@@ -97,8 +97,9 @@ async function loadKBs() {
   try {
     const res = await api.get('/knowledge/bases')
     knowledgeBases.value = res.data || []
-  } catch {
-    ElMessage.error('加载知识库失败')
+  } catch (e) {
+    console.error('加载知识库失败:', e)
+    ElMessage.error('加载知识库失败: ' + (e.message || '未知错误'))
   }
 }
 

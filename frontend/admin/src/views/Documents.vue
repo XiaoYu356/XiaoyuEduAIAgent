@@ -181,8 +181,9 @@ async function loadKBInfo() {
     const res = await api.get('/knowledge/bases')
     const kbs = res.data || []
     kbInfo.value = kbs.find(kb => kb.id === parseInt(kbId.value))
-  } catch {
-    console.error('加载知识库信息失败')
+  } catch (e) {
+    console.error('加载知识库信息失败:', e)
+    ElMessage.error('加载知识库信息失败: ' + (e.message || '未知错误'))
   }
 }
 
@@ -202,8 +203,9 @@ async function loadDocuments() {
     const res = await api.get(`/knowledge/bases/${kbId.value}/documents`, { params })
     documents.value = res.data?.items || []
     total.value = res.data?.total || 0
-  } catch {
-    ElMessage.error('加载文档列表失败')
+  } catch (e) {
+    console.error('加载文档列表失败:', e)
+    ElMessage.error('加载文档列表失败: ' + (e.message || '未知错误'))
   } finally {
     loading.value = false
   }

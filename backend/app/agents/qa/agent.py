@@ -59,9 +59,8 @@ class QAAgent(BaseAgent):
 
     async def _understand_query(self, state: AgentState) -> AgentState:
         query = state["query"]
-        logger.info(f"_understand_query 开始, query: {query[:30]}...")
+        logger.info(f"_understand_query 开始, query: {query[:30] if len(query) > 30 else query}...")
         try:
-            logger.info(f"调用 classify_query_type...")
             query_type, score = classify_query_type(query)
             logger.info(f"问题类型分类: {query_type}, 置信度: {score:.3f}")
             
@@ -336,13 +335,17 @@ class QAAgent(BaseAgent):
         return result
 
     async def stream(self, state: AgentState) -> AsyncIterator[str]:
-        logger.info(f"QAAgent.stream 开始执行, query: {state['query'][:30]}...")
+        logger.info(f"QAAgent.stream 开始执行, query: {state['query'][:30] if len(state['query']) > 30 else state['query']}...")
         if "context" not in state:
             state["context"] = {}
 
-        logger.info(f"调用 _understand_query...")
-        state = await self._understand_query(state)
-        logger.info(f"_understand_query 完成, query_type: {state['context'].get('query_type')}")
+        try:
+            logger.info(f"调用 _understand_query...")
+            state = await self._understand_query(state)
+            logger.info(f"_understand_query 完成, query_type: {state['context'].get('query_type')}")
+        except Exception as e:
+            logger.error(f"_understand_query 异常: {e}", exc_info=True)
+            state["context"]["query_type"] = "clear"
         
         query_type = state["context"].get("query_type", "clear")
         logger.info(f"query_type: {query_type}")

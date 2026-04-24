@@ -11,7 +11,18 @@ export async function chatStream(url, body, onChunk, onDone, onError) {
     })
 
     if (!response.ok) {
-      throw new Error(`HTTP error: ${response.status}`)
+      let errorMsg = `HTTP error: ${response.status}`
+      try {
+        const errorData = await response.json()
+        if (errorData.detail) {
+          errorMsg = errorData.detail
+        } else if (errorData.message) {
+          errorMsg = errorData.message
+        }
+      } catch {
+        // ignore JSON parse error
+      }
+      throw new Error(errorMsg)
     }
 
     const reader = response.body.getReader()

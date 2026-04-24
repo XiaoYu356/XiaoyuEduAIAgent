@@ -111,39 +111,67 @@ async def interview_respond(
 
     new_context = agent_result.get("context", {})
     stage = new_context.get("stage", "TECH")
-    report = new_context.get("report")
 
-    if report and stage == "REPORT" and report.get("overall_score") is not None:
-        interview_report = InterviewReport(
-            user_id=current_user.id,
-            conversation_id=None,
-            tech_score=report.get("tech_score", 0),
-            expression_score=report.get("expression_score", 0),
-            overall_score=report.get("overall_score", 0),
-            radar_data=json.dumps(report.get("radar_data", {}), ensure_ascii=False),
-            report_content=agent_result.get("final_answer", ""),
-            suggestions=json.dumps(report.get("suggestions", []), ensure_ascii=False),
-        )
-        db.add(interview_report)
-        await db.commit()
-        await cache.delete(data.conversation_id)
-    else:
-        await cache.set(data.conversation_id, new_context)
+    await cache.set(data.conversation_id, new_context)
 
-    if stage == "REPORT" and report:
-        return ResponseBase(data={
-            "conversation_id": data.conversation_id,
-            "message": "面试结束，正在生成报告...",
-            "stage": stage,
-            "report": report,
-        })
-    
     return ResponseBase(data={
         "conversation_id": data.conversation_id,
         "message": agent_result.get("final_answer", ""),
         "stage": stage,
-        "report": None,
     })
+
+
+@router.post("/respond/stream")
+async def interview_respond_stream(
+    data: InterviewRespondRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    cache = await get_interview_cache()
+    saved_context = await cache.get(data.conversation_id)
+
+    if not saved_context:
+        raise ValueError("面试会话不存在或已过期")
+
+    agent = InterviewAgent()
+    state = {
+        "query": data.message,
+        "context": saved_context,
+        "messages": [],
+        "conversation_id": data.conversation_id,
+        "user_id": current_user.id,
+        "agent_type": "interview",
+        "intermediate_results": [],
+        "final_answer": "",
+        "confidence": 0.0,
+        "metadata": {},
+        "error": None,
+    }
+
+    async def event_generator():
+        full_response = ""
+        try:
+            async for chunk in agent.stream(state):
+                full_response += chunk
+                yield f"data: {json.dumps({'content': chunk}, ensure_ascii=False)}\n\n"
+
+            new_context = state.get("context", {})
+            stage = new_context.get("stage", "TECH")
+            await cache.set(data.conversation_id, new_context)
+
+            yield f"data: {json.dumps({'done': True, 'stage': stage}, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            logger.error(f"Interview stream error: {e}", exc_info=True)
+            yield f"data: {json.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 @router.get("/history", response_model=ResponseBase)
@@ -297,7 +325,7 @@ async def stream_interview_report(
 
             yield f"data: {json.dumps({'done': True, 'report': report}, ensure_ascii=False)}\n\n"
         else:
-            yield f"data: {json.dumps({'done': True, 'error': '报告解析失败'}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'done': True, 'error': '报告解析失败，请重试'}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
         generate(),
